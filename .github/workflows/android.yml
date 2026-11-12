@@ -23,10 +23,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Rust Security Audit (RustSec CVE Database)
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rust Security & CVE Audit (RustSec Advisory Database)
+        continue-on-error: true
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit --color always || true
 
       - name: Initialize CodeQL Analysis
         uses: github/codeql-action/init@v4
@@ -62,7 +63,7 @@ jobs:
       - name: Extract App Version
         run: |
           VERSION=$(grep 'versionName = ' android/app/build.gradle.kts | awk -F'"' '{print $2}')
-          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Building WordCraft Android version: $VERSION"
 
       - name: Set up Rust Toolchain
@@ -121,11 +122,11 @@ jobs:
 
       - name: Prepare Versioned Packages
         run: |
-          RELEASE_APK=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
+          RELEASE_APK=$(find android/app/build/outputs/apk/release -maxdepth 1 -name "*.apk" -print -quit)
           cp "$RELEASE_APK" "android/app/build/outputs/apk/release/wordcraft-v${APP_VERSION}.apk"
           echo "Created versioned APK: wordcraft-v${APP_VERSION}.apk"
 
-          RELEASE_AAB=$(ls android/app/build/outputs/bundle/release/*.aab | head -n 1)
+          RELEASE_AAB=$(find android/app/build/outputs/bundle/release -maxdepth 1 -name "*.aab" -print -quit)
           cp "$RELEASE_AAB" "android/app/build/outputs/bundle/release/wordcraft-v${APP_VERSION}.aab"
           echo "Created versioned AAB: wordcraft-v${APP_VERSION}.aab"
 

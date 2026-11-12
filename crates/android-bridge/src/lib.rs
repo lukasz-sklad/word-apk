@@ -36,10 +36,7 @@ where
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_initBridge<'local>(
-    _env: JNIEnv<'local>,
-    _class: JClass<'local>,
-) {
+pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_initBridge<'local>(_env: JNIEnv<'local>, _class: JClass<'local>) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // Optional logger or locale init
     }));
@@ -52,12 +49,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_createSessi
     doc_bytes: JByteArray<'local>,
 ) -> jlong {
     let res = catch_unwind(AssertUnwindSafe(|| {
-        let region = Region {
-            language: "pl".into(),
-            territory: "PL".into(),
-            letter: Some(false),
-            inches: Some(false),
-        };
+        let region = Region { language: "pl".into(), territory: "PL".into(), letter: Some(false), inches: Some(false) };
 
         let is_null = doc_bytes.is_null();
         let session = if is_null {
@@ -119,11 +111,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_getPageWidt
 ) -> jfloat {
     with_session(handle, |session| {
         let layout = session.layout();
-        if let Some(page) = layout.pages.get(page_idx as usize) {
-            page.w as jfloat
-        } else {
-            0.0
-        }
+        if let Some(page) = layout.pages.get(page_idx as usize) { page.w as jfloat } else { 0.0 }
     })
     .unwrap_or(0.0)
 }
@@ -137,11 +125,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_getPageHeig
 ) -> jfloat {
     with_session(handle, |session| {
         let layout = session.layout();
-        if let Some(page) = layout.pages.get(page_idx as usize) {
-            page.h as jfloat
-        } else {
-            0.0
-        }
+        if let Some(page) = layout.pages.get(page_idx as usize) { page.h as jfloat } else { 0.0 }
     })
     .unwrap_or(0.0)
 }
@@ -159,8 +143,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_renderPage<
         let layout = session.layout();
         let page = layout.pages.get(page_idx as usize)?;
 
-        let mut opts = RenderOptions::default();
-        opts.dark = dark_mode != 0;
+        let opts = RenderOptions { dark: dark_mode != 0, ..Default::default() };
 
         let rendered = render_page(&session.doc, page, scale.max(0.1), &opts);
         Some(rendered.pixels)
@@ -235,9 +218,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_getPlainTex
     _class: JClass<'local>,
     handle: jlong,
 ) -> jstring {
-    let text = with_session(handle, |session| {
-        session.doc.plain_text(StoryRef::Body)
-    });
+    let text = with_session(handle, |session| session.doc.plain_text(StoryRef::Body));
 
     match text {
         Some(txt) => match env.new_string(txt) {
