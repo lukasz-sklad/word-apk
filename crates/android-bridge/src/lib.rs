@@ -9,7 +9,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jbyteArray, jfloat, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyteArray, jfloat, jfloatArray, jint, jlong, jstring};
 use serde_json::Value;
 
 use wordcraft_doc::StoryRef;
@@ -44,22 +44,44 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_initBridge<
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_createSession<'local>(
-    env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     doc_bytes: JByteArray<'local>,
+    filename: JString<'local>,
 ) -> jlong {
     let res = catch_unwind(AssertUnwindSafe(|| {
         let region = Region { language: "pl".into(), territory: "PL".into(), letter: Some(false), inches: Some(false) };
 
-        let is_null = doc_bytes.is_null();
-        let session = if is_null {
+        let fname: Option<String> = if !filename.is_null() { env.get_string(&filename).ok().map(|s| s.into()) } else { None };
+
+        let session = if doc_bytes.is_null() {
             Session::new(wordcraft_engine::blank_document(&region))
         } else {
             match env.convert_byte_array(&doc_bytes) {
-                Ok(bytes) if !bytes.is_empty() => match wordcraft_docx::read(&bytes) {
-                    Ok(doc) => Session::new(doc),
-                    Err(_) => Session::new(wordcraft_engine::blank_document(&region)),
-                },
+                Ok(bytes) if !bytes.is_empty() => {
+                    let ext = fname.as_deref().and_then(|f| f.rsplit('.').next()).unwrap_or("");
+                    let doc = match ext.to_ascii_lowercase().as_str() {
+                        "docx" => wordcraft_docx::read(&bytes).ok().or_else(|| wordcraft_formats::import("odt", &bytes).and_then(Result::ok)),
+                        "odt" | "ott" => wordcraft_formats::import("odt", &bytes).and_then(Result::ok).or_else(|| wordcraft_docx::read(&bytes).ok()),
+                        "rtf" => wordcraft_formats::import("rtf", &bytes).and_then(Result::ok),
+                        "md" | "markdown" => wordcraft_formats::import("md", &bytes).and_then(Result::ok),
+                        "html" | "htm" => wordcraft_formats::import("html", &bytes).and_then(Result::ok),
+                        "txt" | "text" => wordcraft_formats::import("txt", &bytes).and_then(Result::ok),
+                        _ => {
+                            if bytes.starts_with(b"PK\x03\x04") {
+                                wordcraft_docx::read(&bytes).ok().or_else(|| wordcraft_formats::import("odt", &bytes).and_then(Result::ok))
+                            } else if bytes.starts_with(b"{\\rtf") {
+                                wordcraft_formats::import("rtf", &bytes).and_then(Result::ok)
+                            } else {
+                                wordcraft_formats::import("txt", &bytes).and_then(Result::ok)
+                            }
+                        }
+                    };
+                    match doc {
+                        Some(d) => Session::new(d),
+                        None => Session::new(wordcraft_engine::blank_document(&region)),
+                    }
+                }
                 _ => Session::new(wordcraft_engine::blank_document(&region)),
             }
         };
@@ -146,7 +168,12 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_renderPage<
         let opts = RenderOptions { dark: dark_mode != 0, ..Default::default() };
 
         let rendered = render_page(&session.doc, page, scale.max(0.1), &opts);
-        Some(rendered.pixels)
+        let straight = rendered.to_straight();
+        let mut out = Vec::with_capacity(8 + straight.len());
+        out.extend_from_slice(&rendered.width.to_le_bytes());
+        out.extend_from_slice(&rendered.height.to_le_bytes());
+        out.extend_from_slice(&straight);
+        Some(out)
     })
     .flatten();
 
@@ -157,6 +184,93 @@ pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_renderPage<
         },
         None => std::ptr::null_mut(),
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_getCaret<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jfloatArray {
+    let caret_coords: Option<[f32; 4]> = with_session(handle, |session| {
+        let layout = session.layout();
+        let caret = layout.caret_on(&session.sel.focus, session.page_hint)?;
+        Some([caret.page as f32, caret.x, caret.top, caret.height])
+    })
+    .flatten();
+
+    match caret_coords {
+        Some(coords) => match env.new_float_array(4) {
+            Ok(arr) => {
+                let _ = env.set_float_array_region(&arr, 0, &coords);
+                arr.into_raw()
+            }
+            Err(_) => std::ptr::null_mut(),
+        },
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_setCaret<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    page_idx: jint,
+    x: jfloat,
+    y: jfloat,
+) {
+    let _ = with_session(handle, |session| {
+        let _ = session.run(
+            "caret.set",
+            &serde_json::json!({
+                "page": page_idx,
+                "x": x,
+                "y": y
+            }),
+        );
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_insertText<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    text: JString<'local>,
+) {
+    if text.is_null() {
+        return;
+    }
+    let s: String = match env.get_string(&text) {
+        Ok(jstr) => jstr.into(),
+        Err(_) => return,
+    };
+    let _ = with_session(handle, |session| {
+        let _ = session.run("text.insert", &serde_json::json!({ "text": s }));
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_deleteBackward<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) {
+    let _ = with_session(handle, |session| {
+        let _ = session.run("edit.backspace", &serde_json::json!({}));
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_bridge_WordCraftBridge_insertParagraph<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) {
+    let _ = with_session(handle, |session| {
+        let _ = session.run("edit.enter", &serde_json::json!({}));
+    });
 }
 
 #[unsafe(no_mangle)]

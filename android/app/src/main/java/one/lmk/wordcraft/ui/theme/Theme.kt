@@ -7,7 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
 enum class AppThemeMode {
-    DARK, LIGHT, SEPIA
+    SYSTEM, LIGHT, DARK, SEPIA
 }
 
 private val DarkColorScheme = darkColorScheme(
@@ -36,10 +36,12 @@ private val SepiaColorScheme = lightColorScheme(
 
 @Composable
 fun WordCraftTheme(
-    themeMode: AppThemeMode = if (isSystemInDarkTheme()) AppThemeMode.DARK else AppThemeMode.LIGHT,
+    themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     content: @Composable () -> Unit
 ) {
+    val systemInDark = isSystemInDarkTheme()
     val colorScheme = when (themeMode) {
+        AppThemeMode.SYSTEM -> if (systemInDark) DarkColorScheme else LightColorScheme
         AppThemeMode.DARK -> DarkColorScheme
         AppThemeMode.LIGHT -> LightColorScheme
         AppThemeMode.SEPIA -> SepiaColorScheme

@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            var currentTheme by remember { mutableStateOf(AppThemeMode.DARK) }
+            var currentTheme by remember { mutableStateOf(AppThemeMode.SYSTEM) }
             var currentScreen by remember {
                 mutableStateOf(if (activeSessionHandle != 0L) Screen.EDITOR else Screen.HOME)
             }
@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
                                     if (activeSessionHandle != 0L) {
                                         WordCraftBridge.destroySession(activeSessionHandle)
                                     }
-                                    activeSessionHandle = WordCraftBridge.createSession(null)
+                                    activeSessionHandle = WordCraftBridge.createSession(null, null)
                                     activeDocumentTitle = "Nowy dokument.docx"
                                     activeDocumentUri = null
                                     currentScreen = Screen.EDITOR
@@ -119,8 +119,9 @@ class MainActivity : ComponentActivity() {
                 if (activeSessionHandle != 0L) {
                     WordCraftBridge.destroySession(activeSessionHandle)
                 }
-                activeSessionHandle = WordCraftBridge.createSession(bytes)
-                activeDocumentTitle = getFileName(uri) ?: "Dokument.docx"
+                val fileName = getFileName(uri) ?: "Dokument.docx"
+                activeSessionHandle = WordCraftBridge.createSession(bytes, fileName)
+                activeDocumentTitle = fileName
                 activeDocumentUri = uri
             }
         } catch (e: Exception) {

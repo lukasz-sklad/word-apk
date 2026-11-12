@@ -66,9 +66,10 @@ fun HomeScreen(
                 actions = {
                     IconButton(onClick = {
                         val next = when (currentTheme) {
-                            AppThemeMode.DARK -> AppThemeMode.LIGHT
-                            AppThemeMode.LIGHT -> AppThemeMode.SEPIA
-                            AppThemeMode.SEPIA -> AppThemeMode.DARK
+                            AppThemeMode.SYSTEM -> AppThemeMode.LIGHT
+                            AppThemeMode.LIGHT -> AppThemeMode.DARK
+                            AppThemeMode.DARK -> AppThemeMode.SEPIA
+                            AppThemeMode.SEPIA -> AppThemeMode.SYSTEM
                         }
                         onThemeChange(next)
                     }) {
@@ -93,15 +94,7 @@ fun HomeScreen(
                     .padding(24.dp),
                 onNewDocument = onNewDocument,
                 onOpenFile = {
-                    filePickerLauncher.launch(
-                        arrayOf(
-                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            "application/msword",
-                            "application/vnd.oasis.opendocument.text",
-                            "text/plain",
-                            "text/markdown"
-                        )
-                    )
+                    filePickerLauncher.launch(arrayOf("*/*"))
                 }
             )
         } else {
@@ -113,15 +106,7 @@ fun HomeScreen(
                     .padding(16.dp),
                 onNewDocument = onNewDocument,
                 onOpenFile = {
-                    filePickerLauncher.launch(
-                        arrayOf(
-                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            "application/msword",
-                            "application/vnd.oasis.opendocument.text",
-                            "text/plain",
-                            "text/markdown"
-                        )
-                    )
+                    filePickerLauncher.launch(arrayOf("*/*"))
                 }
             )
         }
