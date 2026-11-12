@@ -1,0 +1,144 @@
+name: Android CI / CD & CVE Security Audit
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cve-audit:
+    name: 🛡️ Security & CVE Vulnerability Audit
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Rust Security Audit (RustSec CVE Database)
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Initialize CodeQL Analysis
+        uses: github/codeql-action/init@v4
+        with:
+          languages: 'java-kotlin'
+          build-mode: 'manual'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x android/gradlew
+
+      - name: Compile Sources for CodeQL
+        working-directory: android
+        run: ./gradlew compileReleaseSources || true
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+
+  build-apk:
+    name: 📦 Build WordCraft Android (APK & AAB)
+    needs: [cve-audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract App Version
+        run: |
+          VERSION=$(grep 'versionName = ' android/app/build.gradle.kts | awk -F'"' '{print $2}')
+          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Building WordCraft Android version: $VERSION"
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Rust Native Bridge (libwordcraft_android_bridge.so)
+        run: |
+          mkdir -p android/app/src/main/jniLibs
+          cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --release -p wordcraft-android-bridge
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Configure Keystore (if GitHub Secrets present)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        working-directory: android
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Configuring release keystore..."
+            mkdir -p keystore
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore/release.keystore
+            cat <<EOF > keystore.properties
+          storeFile=keystore/release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+            echo "Keystore configured successfully."
+          else
+            echo "No keystore secrets found. Building unsigned release package."
+          fi
+
+      - name: Build Release Bundle (AAB) & APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew bundleRelease assembleRelease --stacktrace
+
+      - name: Prepare Versioned Packages
+        run: |
+          RELEASE_APK=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
+          cp "$RELEASE_APK" "android/app/build/outputs/apk/release/wordcraft-v${APP_VERSION}.apk"
+          echo "Created versioned APK: wordcraft-v${APP_VERSION}.apk"
+
+          RELEASE_AAB=$(ls android/app/build/outputs/bundle/release/*.aab | head -n 1)
+          cp "$RELEASE_AAB" "android/app/build/outputs/bundle/release/wordcraft-v${APP_VERSION}.aab"
+          echo "Created versioned AAB: wordcraft-v${APP_VERSION}.aab"
+
+      - name: Upload Release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-v${{ env.APP_VERSION }}-release-aab
+          path: android/app/build/outputs/bundle/release/wordcraft-v${{ env.APP_VERSION }}.aab
+          retention-days: 30
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordcraft-v${{ env.APP_VERSION }}-release-apk
+          path: android/app/build/outputs/apk/release/wordcraft-v${{ env.APP_VERSION }}.apk
+          retention-days: 30

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WordCraft</string>
+    <string name="open_file">Otwórz dokument</string>
+    <string name="new_document">Nowy pusty dokument</string>
+    <string name="recent_documents">Ostatnie dokumenty</string>
+    <string name="no_recent_documents">Brak ostatnio otwieranych dokumentów</string>
+    <string name="open_file_desc">Otwórz plik .docx, .odt, .txt lub .md z pamięci telefonu lub chmury</string>
+    <string name="new_file_desc">Rozpocznij pisanie od czystej kartki</string>
+    <string name="action_bold">Pogrubienie</string>
+    <string name="action_italic">Kursywa</string>
+    <string name="action_underline">Podkreślenie</string>
+    <string name="action_undo">Cofnij</string>
+    <string name="action_redo">Ponów</string>
+    <string name="action_save">Zapisz</string>
+    <string name="action_share">Udostępnij</string>
+    <string name="action_bullet_list">Lista</string>
+    <string name="action_search">Szukaj</string>
+</resources>
