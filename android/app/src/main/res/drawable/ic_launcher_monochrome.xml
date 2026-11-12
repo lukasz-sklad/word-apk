@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <group
+        android:pivotX="256"
+        android:pivotY="256"
+        android:scaleX="0.72"
+        android:scaleY="0.72">
+        <group
+            android:pivotX="256"
+            android:pivotY="256"
+            android:rotation="-6">
+            <!-- Sheet outline -->
+            <path
+                android:fillColor="#00000000"
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="16"
+                android:strokeLineJoin="round"
+                android:pathData="M150,92 H322 L384,154 V420 H150 Z" />
+            <!-- Folded corner -->
+            <path
+                android:fillColor="#00000000"
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="16"
+                android:strokeLineJoin="round"
+                android:pathData="M322,92 V154 H384" />
+            <!-- Text lines -->
+            <path
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="14"
+                android:strokeLineCap="round"
+                android:pathData="M190,200 H344 M190,246 H344 M190,292 H344 M190,338 H290" />
+        </group>
+        <!-- Stylus / Pen body -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M300,410 L418,292 L446,320 L328,438 L292,446 Z" />
+        <!-- Stylus tip -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="8"
+            android:strokeLineJoin="round"
+            android:pathData="M418,292 L436,274 L464,302 L446,320 Z" />
+    </group>
+</vector>

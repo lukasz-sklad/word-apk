@@ -123,12 +123,16 @@ jobs:
       - name: Prepare Versioned Packages
         run: |
           RELEASE_APK=$(find android/app/build/outputs/apk/release -maxdepth 1 -name "*.apk" -print -quit)
-          cp "$RELEASE_APK" "android/app/build/outputs/apk/release/wordcraft-v${APP_VERSION}.apk"
-          echo "Created versioned APK: wordcraft-v${APP_VERSION}.apk"
+          if [ -n "$RELEASE_APK" ] && [ "$RELEASE_APK" != "android/app/build/outputs/apk/release/wordcraft-v${APP_VERSION}.apk" ]; then
+            cp -f "$RELEASE_APK" "android/app/build/outputs/apk/release/wordcraft-v${APP_VERSION}.apk"
+          fi
+          echo "Prepared APK: $(find android/app/build/outputs/apk/release -name '*.apk')"
 
           RELEASE_AAB=$(find android/app/build/outputs/bundle/release -maxdepth 1 -name "*.aab" -print -quit)
-          cp "$RELEASE_AAB" "android/app/build/outputs/bundle/release/wordcraft-v${APP_VERSION}.aab"
-          echo "Created versioned AAB: wordcraft-v${APP_VERSION}.aab"
+          if [ -n "$RELEASE_AAB" ] && [ "$RELEASE_AAB" != "android/app/build/outputs/bundle/release/wordcraft-v${APP_VERSION}.aab" ]; then
+            cp -f "$RELEASE_AAB" "android/app/build/outputs/bundle/release/wordcraft-v${APP_VERSION}.aab"
+          fi
+          echo "Prepared AAB: $(find android/app/build/outputs/bundle/release -name '*.aab')"
 
       - name: Upload Release AAB
         uses: actions/upload-artifact@v4
