@@ -27,8 +27,8 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, UiState, 
 
 use crate::ime;
 use crate::mobile::{
-    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, prefs_write_atomic,
-    to_egui_events, utf8_byte_to_utf16_offset,
+    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, prefs_write_atomic, to_egui_events,
+    utf8_byte_to_utf16_offset,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +53,11 @@ struct ActivityBridge {
 impl ActivityBridge {
     #[allow(unsafe_code)]
     fn from_app(app: &AndroidApp) -> Result<Self, String> {
-        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+        let vm_ptr = app.vm_as_ptr();
+        if vm_ptr.is_null() {
+            return Err("JNI bridge init failed: null JavaVM pointer".to_owned());
+        }
+        let vm = unsafe { JavaVM::from_raw(vm_ptr.cast()) };
         let global = vm
             .attach_current_thread(|env| -> jni::errors::Result<Global<JObject<'static>>> {
                 let raw = app.activity_as_ptr();
@@ -114,12 +118,7 @@ impl ActivityBridge {
         self.vm
             .attach_current_thread(|env| -> jni::errors::Result<()> {
                 let n_j = env.new_string(suggested_name)?;
-                let _ = env.call_method(
-                    &*self.activity,
-                    jni_str!("launchSavePicker"),
-                    jni_sig!("(Ljava/lang/String;)V"),
-                    &[JValue::Object(&n_j)],
-                )?;
+                let _ = env.call_method(&*self.activity, jni_str!("launchSavePicker"), jni_sig!("(Ljava/lang/String;)V"), &[JValue::Object(&n_j)])?;
                 Ok(())
             })
             .map_err(|e| format!("cannot open Android save picker: {e}"))
@@ -305,10 +304,7 @@ impl AndroidShell {
         let s_u16 = utf8_byte_to_utf16_offset(&window.text, window.anchor);
         let e_u16 = utf8_byte_to_utf16_offset(&window.text, window.cursor);
         let (sel_start, sel_end) = (s_u16.min(e_u16), s_u16.max(e_u16));
-        let changed = self
-            .last_ime_snapshot
-            .as_ref()
-            .is_none_or(|(t, s, e)| t != &window.text || *s != sel_start || *e != sel_end);
+        let changed = self.last_ime_snapshot.as_ref().is_none_or(|(t, s, e)| t != &window.text || *s != sel_start || *e != sel_end);
         if changed {
             self.bridge.update_ime_selection(&window.text, sel_start, sel_end);
             self.last_ime_snapshot = Some((window.text, sel_start, sel_end));
@@ -380,11 +376,7 @@ impl AndroidShell {
     }
 
     fn modal_blocking_canvas(&self, ctx: &egui::Context) -> bool {
-        self.app.dialog.is_some()
-            || self.app.colors.is_some()
-            || self.app.file_dialog_open()
-            || self.app.ui.backstage
-            || ctx.any_popup_open()
+        self.app.dialog.is_some() || self.app.colors.is_some() || self.app.file_dialog_open() || self.app.ui.backstage || ctx.any_popup_open()
     }
 
     fn draw_safe_insets(&self, ui: &mut Ui) {
@@ -503,7 +495,7 @@ impl eframe::App for AndroidShell {
         raw.events.extend(ime_events);
 
         let modal = self.modal_blocking_canvas(ctx);
-        let outcome = self.touch_filter.process(&mut raw.events, self.app.canvas.viewport, self.select_mode, modal);
+        let outcome = self.touch_filter.process(&mut raw.events, self.app.canvas.canvas_rect, self.select_mode, modal);
         if outcome.tapped_canvas {
             let now = ctx.input(|i| i.time);
             self.set_ime_wanted(true, now);

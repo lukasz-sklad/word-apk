@@ -273,12 +273,8 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnFilePick
                 let paths_raw = paths_joined.try_to_string(env)?;
                 let uris_raw = uris_joined.try_to_string(env)?;
                 let paths: Vec<String> = paths_raw.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
-                let saf_mappings: Vec<(String, String)> = paths
-                    .iter()
-                    .zip(uris_raw.lines())
-                    .filter(|(_, u)| !u.is_empty())
-                    .map(|(p, u)| (p.clone(), u.to_owned()))
-                    .collect();
+                let saf_mappings: Vec<(String, String)> =
+                    paths.iter().zip(uris_raw.lines()).filter(|(_, u)| !u.is_empty()).map(|(p, u)| (p.clone(), u.to_owned())).collect();
                 PickedAnswer { answer: Ok(paths), saf_mappings }
             };
             if let Ok(mut q) = QUEUES.lock() {

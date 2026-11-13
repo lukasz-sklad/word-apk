@@ -263,6 +263,7 @@ pub struct TouchOutcome {
 pub struct TouchGestureFilter {
     active_touches: Vec<(TouchId, Pos2)>,
     phase: GesturePhase,
+    drop_trailing_pointer: bool,
 }
 
 impl TouchGestureFilter {
@@ -298,6 +299,7 @@ impl TouchGestureFilter {
         if modal_open {
             self.active_touches.clear();
             self.phase = GesturePhase::Idle;
+            self.drop_trailing_pointer = false;
             return outcome;
         }
         let original = std::mem::take(events);
@@ -308,17 +310,14 @@ impl TouchGestureFilter {
         outcome
     }
 
-    fn handle_event(
-        &mut self,
-        ev: Event,
-        canvas_viewport: Option<Rect>,
-        select_mode: bool,
-        out: &mut Vec<Event>,
-        outcome: &mut TouchOutcome,
-    ) {
+    fn handle_event(&mut self, ev: Event, canvas_viewport: Option<Rect>, select_mode: bool, out: &mut Vec<Event>, outcome: &mut TouchOutcome) {
         if let Event::Touch { id, phase, pos, .. } = ev {
+            if matches!(phase, TouchPhase::Start) {
+                self.drop_trailing_pointer = false;
+            }
             self.set_touch(id, pos, phase);
-            if self.active_touches.len() >= 2 && !matches!(self.phase, GesturePhase::Pinch) {
+            let any_in_canvas = canvas_viewport.is_some_and(|r| self.active_touches.iter().any(|(_, p)| r.contains(*p)));
+            if self.active_touches.len() >= 2 && any_in_canvas && !matches!(self.phase, GesturePhase::Pinch) {
                 self.enter_pinch(out);
             }
             match phase {
@@ -329,6 +328,18 @@ impl TouchGestureFilter {
             }
             out.push(ev);
             return;
+        }
+        if matches!(self.phase, GesturePhase::Idle) && self.drop_trailing_pointer {
+            match ev {
+                Event::PointerButton { button: PointerButton::Primary, pressed: false, .. } | Event::PointerMoved(_) => return,
+                Event::PointerGone => {
+                    self.drop_trailing_pointer = false;
+                    return;
+                }
+                _ => {
+                    self.drop_trailing_pointer = false;
+                }
+            }
         }
         if matches!(self.phase, GesturePhase::Idle) || (select_mode && !matches!(self.phase, GesturePhase::Pinch)) {
             out.push(ev);
@@ -393,15 +404,18 @@ impl TouchGestureFilter {
                 out.push(Event::PointerGone);
                 outcome.tapped_canvas = true;
                 self.phase = GesturePhase::Idle;
+                self.drop_trailing_pointer = true;
             }
             GesturePhase::Scrolling { id: tid, .. } if tid == id => {
                 emit_wheel(out, Vec2::ZERO, TouchPhase::End);
                 out.push(Event::PointerGone);
                 self.phase = GesturePhase::Idle;
+                self.drop_trailing_pointer = true;
             }
             GesturePhase::Pinch if self.active_touches.is_empty() => {
                 out.push(Event::PointerGone);
                 self.phase = GesturePhase::Idle;
+                self.drop_trailing_pointer = true;
             }
             _ => {}
         }
@@ -413,13 +427,16 @@ impl TouchGestureFilter {
                 emit_wheel(out, Vec2::ZERO, TouchPhase::End);
                 out.push(Event::PointerGone);
                 self.phase = GesturePhase::Idle;
+                self.drop_trailing_pointer = true;
             }
             GesturePhase::PendingTap { id: tid, .. } if tid == id => {
                 self.phase = GesturePhase::Idle;
+                self.drop_trailing_pointer = true;
             }
             GesturePhase::Pinch if self.active_touches.is_empty() => {
                 out.push(Event::PointerGone);
                 self.phase = GesturePhase::Idle;
+                self.drop_trailing_pointer = true;
             }
             _ => {}
         }
@@ -556,7 +573,10 @@ mod tests {
     #[test]
     fn commit_splits_newlines_and_caps_on_char_boundary() {
         let pieces = split_commit_text("zażółć\r\ngęślą\njaźń");
-        assert_eq!(pieces, vec![CommitPiece::Text("zażółć"), CommitPiece::Enter, CommitPiece::Text("gęślą"), CommitPiece::Enter, CommitPiece::Text("jaźń")]);
+        assert_eq!(
+            pieces,
+            vec![CommitPiece::Text("zażółć"), CommitPiece::Enter, CommitPiece::Text("gęślą"), CommitPiece::Enter, CommitPiece::Text("jaźń")]
+        );
         // Splitting mid-codepoint backs down cleanly without panicking.
         assert_eq!(truncate_utf8_bytes("ąćę", 3), "ą");
         assert_eq!(utf8_byte_to_utf16_offset("a😀b", "a😀".len()), 3);
@@ -589,7 +609,8 @@ mod tests {
         let mut filter = TouchGestureFilter::default();
 
         // Quick tap inside canvas triggers click + IME request, no wheel events.
-        let mut events = vec![touch(1, TouchPhase::Start, pos2(100.0, 200.0)), Event::PointerMoved(pos2(100.0, 200.0)), press(pos2(100.0, 200.0), true)];
+        let mut events =
+            vec![touch(1, TouchPhase::Start, pos2(100.0, 200.0)), Event::PointerMoved(pos2(100.0, 200.0)), press(pos2(100.0, 200.0), true)];
         let out1 = filter.process(&mut events, vp, false, false);
         assert!(!out1.tapped_canvas);
         assert!(!events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })));
@@ -628,10 +649,11 @@ mod tests {
             touch(2, TouchPhase::Move, pos2(250.0, 200.0)),
             touch(1, TouchPhase::End, pos2(100.0, 200.0)),
             touch(2, TouchPhase::End, pos2(250.0, 200.0)),
+            press(pos2(250.0, 200.0), false),
         ];
         filter.process(&mut pinch, vp, false, false);
         assert!(!pinch.iter().any(|e| matches!(e, Event::PointerButton { .. })));
-        assert_eq!(pinch.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 6);
+        assert_eq!(pinch.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 5);
 
         // Explicit select mode passes single-finger drag straight through.
         let mut sel = vec![touch(3, TouchPhase::Start, pos2(100.0, 200.0)), press(pos2(100.0, 200.0), true)];

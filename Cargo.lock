@@ -186,6 +186,7 @@ dependencies = [
  "ndk-context",
  "ndk-sys",
  "num_enum",
+ "simd_cesu8",
  "thiserror 2.0.21",
 ]
 
@@ -6857,6 +6858,7 @@ dependencies = [
  "serde_json",
  "wordcraft-doc",
  "wordcraft-engine",
+ "wordcraft-layout",
  "wordcraft-ui-egui",
 ]
 
