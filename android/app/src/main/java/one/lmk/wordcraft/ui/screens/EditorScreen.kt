@@ -28,11 +28,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -58,16 +60,17 @@ fun EditorScreen(
     onSave: () -> Unit
 ) {
     var activeRibbonTab by remember { mutableStateOf(RibbonTab.HOME) }
-    // Domyślny zoom 1.0f = dopasowanie kartki do szerokości ekranu telefonu (Fit Width)
-    var zoomFactor by remember { mutableStateOf(1.0f) }
+    // Domyślny zoom 1.6f = komfortowa czytelność na telefonie (bez konieczności lupy)
+    var zoomFactor by remember { mutableStateOf(1.6f) }
     var pageCount by remember { mutableStateOf(1) }
     val pageBitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
     var refreshTrigger by remember { mutableStateOf(0) }
     var activeCaret by remember { mutableStateOf<WordCraftBridge.CaretInfo?>(null) }
 
+    val sentinel = "••••••••••"
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    var typingBuffer by remember { mutableStateOf(TextFieldValue("")) }
+    var typingBuffer by remember { mutableStateOf(TextFieldValue(sentinel, TextRange(sentinel.length))) }
     var quickTextInput by remember { mutableStateOf("") }
 
     val configuration = LocalConfiguration.current
@@ -169,14 +172,18 @@ fun EditorScreen(
                     }
 
                     TextButton(onClick = {
-                        // Kliknięcie resetuje powiększenie do 100% (Fit Width)
-                        zoomFactor = 1.0f
+                        // Kliknięcie przełącza wygodne poziomy powiększenia: 100% -> 160% -> 220% -> 100%
+                        zoomFactor = when {
+                            zoomFactor < 1.3f -> 1.6f
+                            zoomFactor < 1.9f -> 2.2f
+                            else -> 1.0f
+                        }
                     }) {
                         Text("${(zoomFactor * 100).toInt()}%", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     IconButton(onClick = {
-                        zoomFactor = (zoomFactor + 0.25f).coerceAtMost(3.0f)
+                        zoomFactor = (zoomFactor + 0.25f).coerceAtMost(3.5f)
                     }) {
                         Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     }
@@ -211,22 +218,23 @@ fun EditorScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        // Szybkie pole wprowadzania tekstu (z naturalną wysokością)
+                        // Szybkie pole wprowadzania tekstu (styl komunikatora, bez ucinania wysokości)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 4.dp),
+                                .padding(bottom = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextField(
+                            OutlinedTextField(
                                 value = quickTextInput,
                                 onValueChange = { quickTextInput = it },
                                 placeholder = { Text("Pisz tekst...", fontSize = 14.sp) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                shape = RoundedCornerShape(20.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = WordBluePrimary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                                 ),
                                 keyboardOptions = KeyboardOptions(
                                     capitalization = KeyboardCapitalization.Sentences,
@@ -242,19 +250,22 @@ fun EditorScreen(
                                     }
                                 )
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(onClick = {
-                                if (quickTextInput.isNotEmpty()) {
-                                    WordCraftBridge.insertText(sessionHandle, quickTextInput)
-                                    quickTextInput = ""
-                                    refreshTrigger++
-                                }
-                            }) {
-                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Wstaw", tint = WordBluePrimary)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            FilledIconButton(
+                                onClick = {
+                                    if (quickTextInput.isNotEmpty()) {
+                                        WordCraftBridge.insertText(sessionHandle, quickTextInput)
+                                        quickTextInput = ""
+                                        refreshTrigger++
+                                    }
+                                },
+                                colors = IconButtonDefaults.filledIconButtonColors(containerColor = WordBluePrimary)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Wstaw", tint = Color.White)
                             }
                         }
 
-                        // Dolny pasek narzędzi: Klawiatura, A+, A-, B, I, U, Zaznacz wszystko, Enter
+                        // Dolny pasek narzędzi: Klawiatura, Usuń (Backspace), A+, A-, B, I, Zaznacz, Akapit
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -265,6 +276,14 @@ fun EditorScreen(
                                 keyboardController?.show()
                             }) {
                                 Icon(Icons.Default.Keyboard, contentDescription = "Klawiatura")
+                            }
+
+                            // Dedykowany przycisk usuwania znaku (Backspace)
+                            IconButton(onClick = {
+                                WordCraftBridge.deleteBackward(sessionHandle)
+                                refreshTrigger++
+                            }) {
+                                Icon(Icons.AutoMirrored.Filled.Backspace, contentDescription = "Usuń znak")
                             }
 
                             // Powiększ czcionkę w dokumencie (A+)
@@ -285,20 +304,17 @@ fun EditorScreen(
                                 Icon(Icons.Default.FormatItalic, contentDescription = "Kursywa")
                             }
 
-                            IconButton(onClick = { dispatchCommand("format.underline", null) }) {
-                                Icon(Icons.Default.FormatUnderlined, contentDescription = "Podkreślenie")
+                            // Zaznacz słowo / akapit / rozszerz zaznaczenie
+                            TextButton(onClick = { dispatchCommand("select.extend", null) }) {
+                                Text("Zaznacz", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                             }
 
-                            // Zaznacz cały tekst w dokumencie
-                            TextButton(onClick = { dispatchCommand("select.all", null) }) {
-                                Text("Wszystko", fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                            }
-
+                            // Nowy akapit (Enter)
                             IconButton(onClick = {
                                 WordCraftBridge.insertParagraph(sessionHandle)
                                 refreshTrigger++
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Nowy akapit")
+                                Icon(Icons.AutoMirrored.Filled.KeyboardReturn, contentDescription = "Nowy akapit", tint = WordBluePrimary)
                             }
                         }
                     }
@@ -312,26 +328,34 @@ fun EditorScreen(
                 .padding(padding)
         ) {
             // Niewidoczne pole przechwytujące bezpośrednie wpisywanie z klawiatury fizycznej lub ekranowej
+            // Używa bufora strażnika (sentinel), dzięki czemu Gboard nigdy nie ignoruje klawisza Backspace
             BasicTextField(
                 value = typingBuffer,
                 onValueChange = { newVal ->
-                    if (newVal.text.length > typingBuffer.text.length) {
-                        val inserted = newVal.text.substring(typingBuffer.text.length)
+                    if (newVal.text.length > sentinel.length) {
+                        val inserted = newVal.text.substring(sentinel.length)
                         WordCraftBridge.insertText(sessionHandle, inserted)
                         refreshTrigger++
-                    } else if (newVal.text.length < typingBuffer.text.length) {
-                        WordCraftBridge.deleteBackward(sessionHandle)
+                    } else if (newVal.text.length < sentinel.length) {
+                        val count = sentinel.length - newVal.text.length
+                        repeat(count) {
+                            WordCraftBridge.deleteBackward(sessionHandle)
+                        }
                         refreshTrigger++
                     }
-                    typingBuffer = newVal
-                    if (typingBuffer.text.length > 30) {
-                        typingBuffer = TextFieldValue("")
-                    }
+                    typingBuffer = TextFieldValue(sentinel, TextRange(sentinel.length))
                 },
                 modifier = Modifier
                     .size(1.dp)
                     .alpha(0.01f)
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .onPreviewKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyDown && keyEvent.key == Key.Backspace) {
+                            WordCraftBridge.deleteBackward(sessionHandle)
+                            refreshTrigger++
+                            true
+                        } else false
+                    },
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,
                     autoCorrectEnabled = true,
@@ -385,7 +409,14 @@ fun EditorScreen(
             ) {
                 LazyColumn(
                     modifier = Modifier
-                        .padding(vertical = 12.dp),
+                        .padding(vertical = 12.dp)
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, _, zoom, _ ->
+                                if (zoom != 1f) {
+                                    zoomFactor = (zoomFactor * zoom).coerceIn(0.75f, 3.5f)
+                                }
+                            }
+                        },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -405,14 +436,30 @@ fun EditorScreen(
                                     .height(cardHeightDp)
                                     .shadow(8.dp, RoundedCornerShape(2.dp))
                                     .pointerInput(pageIdx, currentCardWidthDp) {
-                                        detectTapGestures { offset ->
-                                            val ptX = (offset.x / cardWidthPx) * pageW
-                                            val ptY = (offset.y / cardHeightPx) * pageH
-                                            WordCraftBridge.setCaret(sessionHandle, pageIdx, ptX, ptY)
-                                            focusRequester.requestFocus()
-                                            keyboardController?.show()
-                                            refreshTrigger++
-                                        }
+                                        detectTapGestures(
+                                            onTap = { offset ->
+                                                val ptX = (offset.x / cardWidthPx) * pageW
+                                                val ptY = (offset.y / cardHeightPx) * pageH
+                                                WordCraftBridge.setCaret(sessionHandle, pageIdx, ptX, ptY)
+                                                focusRequester.requestFocus()
+                                                keyboardController?.show()
+                                                refreshTrigger++
+                                            },
+                                            onDoubleTap = { offset ->
+                                                val ptX = (offset.x / cardWidthPx) * pageW
+                                                val ptY = (offset.y / cardHeightPx) * pageH
+                                                WordCraftBridge.setCaret(sessionHandle, pageIdx, ptX, ptY)
+                                                WordCraftBridge.runCommand(sessionHandle, "select.word", null)
+                                                refreshTrigger++
+                                            },
+                                            onLongPress = { offset ->
+                                                val ptX = (offset.x / cardWidthPx) * pageW
+                                                val ptY = (offset.y / cardHeightPx) * pageH
+                                                WordCraftBridge.setCaret(sessionHandle, pageIdx, ptX, ptY)
+                                                WordCraftBridge.runCommand(sessionHandle, "select.paragraph", null)
+                                                refreshTrigger++
+                                            }
+                                        )
                                     },
                                 shape = RoundedCornerShape(2.dp),
                                 colors = CardDefaults.cardColors(containerColor = paperBgColor)
