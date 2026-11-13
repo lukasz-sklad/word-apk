@@ -71,9 +71,15 @@ impl WordApp {
             backstage::show(self, ui);
         } else if !self.has_document() {
             // No document open (#1129): the ribbon greyed out but for Help, and no page.
-            chrome::title_bar(self, ui);
-            ribbon::show(self, ui);
-            chrome::status_bar(self, ui);
+            if !self.ui.compact_chrome {
+                chrome::title_bar(self, ui);
+            }
+            if !self.ui.hide_ribbon_strip {
+                ribbon::show(self, ui);
+            }
+            if !self.ui.compact_chrome {
+                chrome::status_bar(self, ui);
+            }
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |_| {});
         } else {
             let screen = chrome::Screen::of(&self.session.view);
@@ -82,16 +88,22 @@ impl WordApp {
             if screen != chrome::Screen::Normal {
                 chrome::screen_bar(self, ui, screen);
             } else {
-                chrome::title_bar(self, ui);
-                if moved(self) {
-                    return;
+                if !self.ui.compact_chrome {
+                    chrome::title_bar(self, ui);
+                    if moved(self) {
+                        return;
+                    }
                 }
-                ribbon::show(self, ui);
-                if moved(self) {
-                    return;
+                if !self.ui.hide_ribbon_strip {
+                    ribbon::show(self, ui);
+                    if moved(self) {
+                        return;
+                    }
                 }
                 crate::language_packs::bar(self, ui);
-                chrome::status_bar(self, ui);
+                if !self.ui.compact_chrome {
+                    chrome::status_bar(self, ui);
+                }
                 panes::show(self, ui);
             }
             if moved(self) {

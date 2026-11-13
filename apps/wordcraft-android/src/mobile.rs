@@ -234,6 +234,48 @@ pub fn to_egui_events(batch: &[AndroidInput]) -> Vec<Event> {
     out
 }
 
+/// Converts an Android `MotionEvent` `ACTION_SCROLL` `(AXIS_HSCROLL, AXIS_VSCROLL)` pair into an
+/// egui [`Event::MouseWheel`]. Positive Android `AXIS_VSCROLL` scrolls toward the top (positive `dy`).
+pub fn wheel_to_egui_event(h_scroll: f32, v_scroll: f32) -> Option<Event> {
+    if !h_scroll.is_finite() || !v_scroll.is_finite() {
+        return None;
+    }
+    let h = h_scroll.clamp(-64.0, 64.0);
+    let v = v_scroll.clamp(-64.0, 64.0);
+    if h.abs() < 1e-4 && v.abs() < 1e-4 {
+        return None;
+    }
+    Some(Event::MouseWheel {
+        unit: MouseWheelUnit::Line,
+        delta: Vec2::new(-h, v),
+        phase: TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+        source: MouseWheelSource::Wheel,
+    })
+}
+
+/// Converts an Android `ACTION_HOVER_MOVE` physical-pixel position into a logical [`Event::PointerMoved`].
+pub fn hover_to_egui_event(x_px: f32, y_px: f32, pixels_per_point: f32) -> Option<Event> {
+    if !x_px.is_finite() || !y_px.is_finite() || !pixels_per_point.is_finite() || pixels_per_point <= 0.05 {
+        return None;
+    }
+    let x = (x_px / pixels_per_point).clamp(0.0, 16_384.0);
+    let y = (y_px / pixels_per_point).clamp(0.0, 16_384.0);
+    Some(Event::PointerMoved(egui::pos2(x, y)))
+}
+
+/// Returns the touch-pannable document viewport excluding scrollbars.
+///
+/// Falls back to `canvas_rect` trimmed on the right/bottom before the first scroll pass computes `viewport`.
+pub fn document_pan_rect(viewport: Option<Rect>, canvas_rect: Option<Rect>) -> Option<Rect> {
+    viewport.or_else(|| canvas_rect.map(|r| Rect::from_min_max(r.min, egui::pos2((r.max.x - 18.0).max(r.min.x), (r.max.y - 18.0).max(r.min.y)))))
+}
+
+/// Minimum average finger distance from the centroid before scaling begins (prevents spikes).
+const MIN_PINCH_RADIUS_DP: f32 = 10.0;
+/// Bounds per-event pinch scale deltas against single-frame touch jitter.
+const MAX_PINCH_STEP_RATIO: f32 = 1.35;
+
 /// Phase of a touch gesture inside the document canvas when not in explicit text-selection mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum GesturePhase {
@@ -247,7 +289,10 @@ enum GesturePhase {
         id: TouchId,
         last: Pos2,
     },
-    Pinch,
+    Pinch {
+        center: Pos2,
+        span: Option<f32>,
+    },
 }
 
 /// Side effects reported after [`TouchGestureFilter::process`] rewrites one frame's events.
@@ -268,6 +313,9 @@ pub struct TouchGestureFilter {
 
 impl TouchGestureFilter {
     fn set_touch(&mut self, id: TouchId, pos: Pos2, phase: TouchPhase) {
+        if !pos.x.is_finite() || !pos.y.is_finite() {
+            return;
+        }
         match phase {
             TouchPhase::Start | TouchPhase::Move => {
                 if let Some(entry) = self.active_touches.iter_mut().find(|(tid, _)| *tid == id) {
@@ -282,12 +330,15 @@ impl TouchGestureFilter {
         }
     }
 
-    fn centroid(&self) -> Option<Pos2> {
-        if self.active_touches.is_empty() {
+    fn pinch_geometry(&self) -> Option<(Pos2, f32)> {
+        let count = self.active_touches.len();
+        if count < 2 {
             return None;
         }
         let sum = self.active_touches.iter().fold(Vec2::ZERO, |acc, (_, p)| acc + p.to_vec2());
-        Some((sum / self.active_touches.len() as f32).to_pos2())
+        let center = (sum / (count as f32)).to_pos2();
+        let radius_sum: f32 = self.active_touches.iter().map(|(_, p)| (*p - center).length()).sum();
+        Some((center, radius_sum / (count as f32)))
     }
 
     /// Rewrites `events` for a single frame and returns any tap trigger.
@@ -317,7 +368,7 @@ impl TouchGestureFilter {
             }
             self.set_touch(id, pos, phase);
             let any_in_canvas = canvas_viewport.is_some_and(|r| self.active_touches.iter().any(|(_, p)| r.contains(*p)));
-            if self.active_touches.len() >= 2 && any_in_canvas && !matches!(self.phase, GesturePhase::Pinch) {
+            if self.active_touches.len() >= 2 && any_in_canvas && !matches!(self.phase, GesturePhase::Pinch { .. }) {
                 self.enter_pinch(out);
             }
             match phase {
@@ -326,7 +377,12 @@ impl TouchGestureFilter {
                 TouchPhase::End => self.on_touch_end(id, pos, out, outcome),
                 TouchPhase::Cancel => self.on_touch_cancel(id, out),
             }
-            out.push(ev);
+            // During active Pinch we emit explicit bounded Event::Zoom + PointerMoved(centroid)
+            // directly, avoiding egui::TouchState's unguarded avg_distance division when fingers
+            // start close together or when PointerGone clears pointer_pos.
+            if !matches!(self.phase, GesturePhase::Pinch { .. }) {
+                out.push(ev);
+            }
             return;
         }
         if matches!(self.phase, GesturePhase::Idle) && self.drop_trailing_pointer {
@@ -341,7 +397,7 @@ impl TouchGestureFilter {
                 }
             }
         }
-        if matches!(self.phase, GesturePhase::Idle) || (select_mode && !matches!(self.phase, GesturePhase::Pinch)) {
+        if matches!(self.phase, GesturePhase::Idle) || (select_mode && !matches!(self.phase, GesturePhase::Pinch { .. })) {
             out.push(ev);
             return;
         }
@@ -357,16 +413,20 @@ impl TouchGestureFilter {
         if matches!(self.phase, GesturePhase::Scrolling { .. }) {
             emit_wheel(out, Vec2::ZERO, TouchPhase::End);
         }
-        if let Some(c) = self.centroid() {
-            out.push(Event::PointerMoved(c));
+        if let Some((center, radius)) = self.pinch_geometry() {
+            out.push(Event::PointerMoved(center));
+            emit_wheel(out, Vec2::ZERO, TouchPhase::Start);
+            let span = (radius >= MIN_PINCH_RADIUS_DP).then_some(radius);
+            self.phase = GesturePhase::Pinch { center, span };
         }
-        self.phase = GesturePhase::Pinch;
     }
 
     fn on_touch_start(&mut self, id: TouchId, pos: Pos2, canvas_viewport: Option<Rect>, select_mode: bool) {
         let in_canvas = canvas_viewport.is_some_and(|r| r.contains(pos));
-        if self.active_touches.len() >= 2 && in_canvas {
-            self.phase = GesturePhase::Pinch;
+        if matches!(self.phase, GesturePhase::Pinch { .. }) {
+            if let Some((center, radius)) = self.pinch_geometry() {
+                self.phase = GesturePhase::Pinch { center, span: (radius >= MIN_PINCH_RADIUS_DP).then_some(radius) };
+            }
         } else if matches!(self.phase, GesturePhase::Idle) && in_canvas && !select_mode {
             self.phase = GesturePhase::PendingTap { id, start: pos };
         }
@@ -386,12 +446,44 @@ impl TouchGestureFilter {
                 emit_wheel(out, pos - last, TouchPhase::Move);
                 self.phase = GesturePhase::Scrolling { id: tid, last: pos };
             }
-            GesturePhase::Pinch => {
-                if let Some(c) = self.centroid() {
-                    out.push(Event::PointerMoved(c));
+            GesturePhase::Pinch { mut center, mut span } => {
+                if let Some((new_center, new_radius)) = self.pinch_geometry() {
+                    out.push(Event::PointerMoved(new_center));
+                    let pan_delta = new_center - center;
+                    if pan_delta.length_sq() > 0.25 {
+                        emit_wheel(out, pan_delta, TouchPhase::Move);
+                        center = new_center;
+                    }
+                    if let Some(old_span) = span {
+                        if new_radius >= MIN_PINCH_RADIUS_DP {
+                            let min_ratio = 1.0 / MAX_PINCH_STEP_RATIO;
+                            let ratio = (new_radius / old_span).clamp(min_ratio, MAX_PINCH_STEP_RATIO);
+                            if (ratio - 1.0).abs() > 0.002 {
+                                out.push(Event::Zoom(ratio));
+                                span = Some(new_radius);
+                            }
+                        }
+                    } else if new_radius >= MIN_PINCH_RADIUS_DP {
+                        span = Some(new_radius);
+                    }
+                    self.phase = GesturePhase::Pinch { center, span };
                 }
             }
             _ => {}
+        }
+    }
+
+    fn finish_pinch_or_reanchor(&mut self, out: &mut Vec<Event>) {
+        if let Some((new_center, new_radius)) = self.pinch_geometry() {
+            out.push(Event::PointerMoved(new_center));
+            self.phase = GesturePhase::Pinch { center: new_center, span: (new_radius >= MIN_PINCH_RADIUS_DP).then_some(new_radius) };
+        } else if let Some((_, remaining_pos)) = self.active_touches.first().copied() {
+            self.phase = GesturePhase::Pinch { center: remaining_pos, span: None };
+        } else {
+            emit_wheel(out, Vec2::ZERO, TouchPhase::End);
+            out.push(Event::PointerGone);
+            self.phase = GesturePhase::Idle;
+            self.drop_trailing_pointer = true;
         }
     }
 
@@ -412,11 +504,7 @@ impl TouchGestureFilter {
                 self.phase = GesturePhase::Idle;
                 self.drop_trailing_pointer = true;
             }
-            GesturePhase::Pinch if self.active_touches.is_empty() => {
-                out.push(Event::PointerGone);
-                self.phase = GesturePhase::Idle;
-                self.drop_trailing_pointer = true;
-            }
+            GesturePhase::Pinch { .. } => self.finish_pinch_or_reanchor(out),
             _ => {}
         }
     }
@@ -433,11 +521,7 @@ impl TouchGestureFilter {
                 self.phase = GesturePhase::Idle;
                 self.drop_trailing_pointer = true;
             }
-            GesturePhase::Pinch if self.active_touches.is_empty() => {
-                out.push(Event::PointerGone);
-                self.phase = GesturePhase::Idle;
-                self.drop_trailing_pointer = true;
-            }
+            GesturePhase::Pinch { .. } => self.finish_pinch_or_reanchor(out),
             _ => {}
         }
     }
@@ -500,6 +584,7 @@ pub fn apply_initial_mobile_defaults(app: &mut WordApp, had_saved_prefs: bool) {
     app.set_startup_update_check(false);
     app.ui.start_screen = false;
     app.ui.backstage = false;
+    app.ui.compact_chrome = true;
     if !had_saved_prefs {
         app.ui.ribbon_collapsed = true;
     }
@@ -641,19 +726,37 @@ mod tests {
         let vp = Some(Rect::from_min_size(pos2(0.0, 50.0), vec2(400.0, 700.0)));
         let mut filter = TouchGestureFilter::default();
 
-        // Two-finger pinch keeps Touch events while suppressing Primary pointer selection.
+        // Two-finger pinch emits bounded Zoom + PointerMoved(centroid) while suppressing Primary pointer selection.
         let mut pinch = vec![
             touch(1, TouchPhase::Start, pos2(100.0, 200.0)),
             press(pos2(100.0, 200.0), true),
             touch(2, TouchPhase::Start, pos2(200.0, 200.0)),
-            touch(2, TouchPhase::Move, pos2(250.0, 200.0)),
+            touch(2, TouchPhase::Move, pos2(220.0, 200.0)),
             touch(1, TouchPhase::End, pos2(100.0, 200.0)),
-            touch(2, TouchPhase::End, pos2(250.0, 200.0)),
-            press(pos2(250.0, 200.0), false),
+            touch(2, TouchPhase::End, pos2(220.0, 200.0)),
+            press(pos2(220.0, 200.0), false),
         ];
         filter.process(&mut pinch, vp, false, false);
         assert!(!pinch.iter().any(|e| matches!(e, Event::PointerButton { .. })));
-        assert_eq!(pinch.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 5);
+        let zooms: Vec<f32> = pinch.iter().filter_map(|e| if let Event::Zoom(z) = e { Some(*z) } else { None }).collect();
+        assert_eq!(zooms.len(), 1);
+        assert!((zooms[0] - 1.2).abs() < 0.01, "expected 1.20x zoom, got {zooms:?}");
+        assert!(pinch.iter().any(|e| matches!(e, Event::PointerMoved(p) if (p.x - 160.0).abs() < 0.1)));
+
+        // Near-coincident double touch cannot trigger a huge zoom spike.
+        let mut spike = vec![
+            touch(10, TouchPhase::Start, pos2(200.0, 200.0)),
+            touch(11, TouchPhase::Start, pos2(201.0, 200.0)),
+            touch(11, TouchPhase::Move, pos2(224.0, 200.0)),
+            touch(10, TouchPhase::End, pos2(200.0, 200.0)),
+            touch(11, TouchPhase::End, pos2(224.0, 200.0)),
+        ];
+        filter.process(&mut spike, vp, false, false);
+        for ev in &spike {
+            if let Event::Zoom(z) = ev {
+                assert!(*z <= MAX_PINCH_STEP_RATIO && *z >= 1.0 / MAX_PINCH_STEP_RATIO, "unbounded pinch zoom: {z}");
+            }
+        }
 
         // Explicit select mode passes single-finger drag straight through.
         let mut sel = vec![touch(3, TouchPhase::Start, pos2(100.0, 200.0)), press(pos2(100.0, 200.0), true)];
@@ -667,6 +770,7 @@ mod tests {
         apply_initial_mobile_defaults(&mut app, false);
         assert!(!app.ui.start_screen);
         assert!(app.ui.ribbon_collapsed);
+        assert!(app.ui.compact_chrome);
         assert_eq!(app.session.view.mode, ViewMode::Web);
 
         let mut mode = AndroidThemeMode::System;
@@ -691,5 +795,70 @@ mod tests {
         assert_eq!(sanitize_stage_filename("../../secret:note?.docx"), "secret_note_.docx");
         assert_eq!(sanitize_stage_filename(".."), "document.docx");
         assert_eq!(sanitize_stage_filename("   "), "document.docx");
+    }
+
+    #[test]
+    fn touch_filter_leaves_scrollbar_strip_untouched_and_allows_mouse_select() {
+        let canvas_rect = Some(Rect::from_min_size(pos2(0.0, 50.0), vec2(400.0, 700.0)));
+        let inner_vp = Some(Rect::from_min_size(pos2(0.0, 50.0), vec2(386.0, 686.0)));
+        let pan_rect = document_pan_rect(inner_vp, canvas_rect);
+        let mut filter = TouchGestureFilter::default();
+
+        // Dragging UP along the right scrollbar strip (x=393, outside inner_vp) passes pointer events through cleanly.
+        let mut sb_drag = vec![
+            touch(1, TouchPhase::Start, pos2(393.0, 300.0)),
+            Event::PointerMoved(pos2(393.0, 300.0)),
+            press(pos2(393.0, 300.0), true),
+            touch(1, TouchPhase::Move, pos2(393.0, 150.0)),
+            Event::PointerMoved(pos2(393.0, 150.0)),
+            touch(1, TouchPhase::End, pos2(393.0, 150.0)),
+            press(pos2(393.0, 150.0), false),
+        ];
+        filter.process(&mut sb_drag, pan_rect, false, false);
+        assert!(!sb_drag.iter().any(|e| matches!(e, Event::MouseWheel { .. })), "scrollbar drag must not be inverted into wheel");
+        assert!(sb_drag.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })));
+
+        // When pointer_is_mouse is true (pass-through selection enabled), dragging inside viewport stays primary drag.
+        let mut mouse_drag = vec![
+            touch(2, TouchPhase::Start, pos2(120.0, 200.0)),
+            press(pos2(120.0, 200.0), true),
+            touch(2, TouchPhase::Move, pos2(180.0, 200.0)),
+            Event::PointerMoved(pos2(180.0, 200.0)),
+            touch(2, TouchPhase::End, pos2(180.0, 200.0)),
+            press(pos2(180.0, 200.0), false),
+        ];
+        filter.process(&mut mouse_drag, pan_rect, true, false);
+        assert!(!mouse_drag.iter().any(|e| matches!(e, Event::MouseWheel { .. })));
+        assert!(mouse_drag.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })));
+    }
+
+    #[test]
+    fn wheel_and_hover_conversions_clamp_and_orient() {
+        assert!(wheel_to_egui_event(f32::NAN, 1.0).is_none());
+        assert!(wheel_to_egui_event(0.0, 0.0).is_none());
+        assert_eq!(
+            wheel_to_egui_event(1.5, 2.0),
+            Some(Event::MouseWheel {
+                unit: MouseWheelUnit::Line,
+                delta: vec2(-1.5, 2.0),
+                phase: TouchPhase::Move,
+                modifiers: Modifiers::NONE,
+                source: MouseWheelSource::Wheel,
+            })
+        );
+        assert_eq!(
+            wheel_to_egui_event(0.0, -500.0),
+            Some(Event::MouseWheel {
+                unit: MouseWheelUnit::Line,
+                delta: vec2(0.0, -64.0),
+                phase: TouchPhase::Move,
+                modifiers: Modifiers::NONE,
+                source: MouseWheelSource::Wheel,
+            })
+        );
+
+        assert!(hover_to_egui_event(100.0, 200.0, 0.0).is_none());
+        assert!(hover_to_egui_event(f32::INFINITY, 200.0, 2.0).is_none());
+        assert_eq!(hover_to_egui_event(300.0, 450.0, 2.5), Some(Event::PointerMoved(pos2(120.0, 180.0))));
     }
 }

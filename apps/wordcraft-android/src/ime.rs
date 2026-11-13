@@ -5,12 +5,13 @@
 //! thread and wakes `eframe` on the `android_main` thread.
 
 use std::ffi::CString;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, Once};
 
 use android_activity::AndroidAppWaker;
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JObject, JString};
-use jni::sys::jint;
+use jni::sys::{jfloat, jint};
 use jni::{Env, EnvUnowned};
 use wordcraft_ui_egui::FileDialogAnswer;
 
@@ -36,6 +37,8 @@ pub struct PendingOpen {
 #[derive(Default)]
 struct SharedQueues {
     inputs: Vec<AndroidInput>,
+    wheel_deltas: Vec<(f32, f32)>,
+    mouse_hover_px: Option<(f32, f32)>,
     insets: SafeInsetsPx,
     insets_changed: bool,
     ime_dismissed: bool,
@@ -45,12 +48,19 @@ struct SharedQueues {
 
 static QUEUES: Mutex<SharedQueues> = Mutex::new(SharedQueues {
     inputs: Vec::new(),
+    wheel_deltas: Vec::new(),
+    mouse_hover_px: None,
     insets: SafeInsetsPx { left: 0, top: 0, right: 0, bottom: 0, ime_bottom: 0 },
     insets_changed: false,
     ime_dismissed: false,
     file_answer: None,
     pending_opens: Vec::new(),
 });
+
+/// Android `Configuration.UI_MODE_NIGHT_MASK` state (`0` = light, `1` = dark, `2` = unknown).
+static SYSTEM_NIGHT_MODE: AtomicU8 = AtomicU8::new(2);
+/// True when the latest pointer event came from a mouse/trackpad rather than finger touch.
+static POINTER_IS_MOUSE: AtomicBool = AtomicBool::new(false);
 
 static WAKER: Mutex<Option<AndroidAppWaker>> = Mutex::new(None);
 static LOGGER_INIT: Once = Once::new();
@@ -110,6 +120,8 @@ pub fn bind_waker(waker: AndroidAppWaker) {
     }
     if let Ok(mut q) = QUEUES.lock() {
         q.inputs.clear();
+        q.wheel_deltas.clear();
+        q.mouse_hover_px = None;
         q.ime_dismissed = false;
         q.file_answer = None;
         q.insets_changed = true;
@@ -136,6 +148,30 @@ fn push_input(item: AndroidInput) {
 /// Drains all queued Android IME / key inputs for the current frame.
 pub fn drain_inputs() -> Vec<AndroidInput> {
     QUEUES.lock().map(|mut q| std::mem::take(&mut q.inputs)).unwrap_or_default()
+}
+
+/// Drains queued Android mouse-wheel `(AXIS_HSCROLL, AXIS_VSCROLL)` deltas for the current frame.
+pub fn drain_wheel_deltas() -> Vec<(f32, f32)> {
+    QUEUES.lock().map(|mut q| std::mem::take(&mut q.wheel_deltas)).unwrap_or_default()
+}
+
+/// Returns the latest queued Android mouse-hover position in physical pixels, if any.
+pub fn take_mouse_hover_px() -> Option<(f32, f32)> {
+    QUEUES.lock().ok().and_then(|mut q| q.mouse_hover_px.take())
+}
+
+/// Returns Android's current system night mode (`Some(true)` = dark, `Some(false)` = light).
+pub fn system_night_mode() -> Option<bool> {
+    match SYSTEM_NIGHT_MODE.load(Ordering::Relaxed) {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
+/// Returns true when the most recent pointer/generic-motion event originated from a mouse device.
+pub fn pointer_is_mouse() -> bool {
+    POINTER_IS_MOUSE.load(Ordering::Relaxed)
 }
 
 /// Returns current physical-pixel safe-area insets and whether they updated since last check.
@@ -308,4 +344,58 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnOpenFile
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnSystemNightMode(_env: EnvUnowned<'_>, _obj: JObject<'_>, night: jint) {
+    let encoded = match night {
+        0 => 0,
+        1 => 1,
+        _ => 2,
+    };
+    SYSTEM_NIGHT_MODE.store(encoded, Ordering::Relaxed);
+    wake_ui();
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnPointerIsMouse(_env: EnvUnowned<'_>, _obj: JObject<'_>, is_mouse: jint) {
+    POINTER_IS_MOUSE.store(is_mouse != 0, Ordering::Relaxed);
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnMouseWheel(
+    _env: EnvUnowned<'_>,
+    _obj: JObject<'_>,
+    h_scroll: jfloat,
+    v_scroll: jfloat,
+) {
+    if !h_scroll.is_finite() || !v_scroll.is_finite() {
+        return;
+    }
+    if let Ok(mut q) = QUEUES.lock()
+        && q.wheel_deltas.len() < MAX_QUEUED_INPUTS
+    {
+        q.wheel_deltas.push((h_scroll, v_scroll));
+    }
+    wake_ui();
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnMouseHover(
+    _env: EnvUnowned<'_>,
+    _obj: JObject<'_>,
+    x_px: jfloat,
+    y_px: jfloat,
+) {
+    if !x_px.is_finite() || !y_px.is_finite() {
+        return;
+    }
+    if let Ok(mut q) = QUEUES.lock() {
+        q.mouse_hover_px = Some((x_px, y_px));
+    }
+    wake_ui();
 }

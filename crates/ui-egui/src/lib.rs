@@ -432,6 +432,12 @@ pub struct UiState {
     /// spaces, or characters without spaces. Right-click the count in the status bar, or File ›
     /// Options › Display. Junk saved values read as words.
     pub status_count: StatusCount,
+    /// Hide desktop title and status bars when the host provides compact touch chrome (e.g. Android).
+    #[serde(skip)]
+    pub compact_chrome: bool,
+    /// Temporarily hide the ribbon tab strip to preserve viewport space (e.g. phone landscape + IME).
+    #[serde(skip)]
+    pub hide_ribbon_strip: bool,
 }
 
 /// The ribbon tab the app opens on, and the one it falls back to when the tab that was showing
@@ -513,6 +519,8 @@ impl Default for UiState {
             dictionary: Vec::new(),
             display_server: DisplayServer::Auto,
             status_count: StatusCount::default(),
+            compact_chrome: false,
+            hide_ribbon_strip: false,
         }
     }
 }

@@ -27,8 +27,8 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, UiState, 
 
 use crate::ime;
 use crate::mobile::{
-    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, prefs_write_atomic, to_egui_events,
-    utf8_byte_to_utf16_offset,
+    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, document_pan_rect, hover_to_egui_event,
+    prefs_write_atomic, to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,7 +142,7 @@ impl ActivityBridge {
                 if obj.is_null() {
                     return Ok(String::new());
                 }
-                let s: JString<'_> = env.cast_local(obj)?;
+                let s = env.cast_local::<JString<'_>>(obj)?;
                 s.try_to_string(env)
             })
             .map_err(|e| format!("SAF writeback JNI error: {e}"))?;
@@ -156,7 +156,7 @@ impl ActivityBridge {
                 if obj.is_null() {
                     return Ok(None);
                 }
-                let s: JString<'_> = env.cast_local(obj)?;
+                let s = env.cast_local::<JString<'_>>(obj)?;
                 let text = s.try_to_string(env)?;
                 Ok(if text.is_empty() { None } else { Some(text) })
             })
@@ -232,6 +232,7 @@ struct AndroidShell {
     prev_ime_bottom_dp: f32,
     insets: SafeInsetsDp,
     theme_mode: AndroidThemeMode,
+    ribbon_pinned_during_ime: bool,
     last_synced_bars_light: Option<bool>,
     last_ime_snapshot: Option<(String, usize, usize)>,
     last_saved_prefs_json: String,
@@ -267,6 +268,7 @@ impl AndroidShell {
             prev_ime_bottom_dp: 0.0,
             insets: SafeInsetsDp::default(),
             theme_mode,
+            ribbon_pinned_during_ime: false,
             last_synced_bars_light: None,
             last_ime_snapshot: None,
             last_saved_prefs_json: initial_prefs,
@@ -368,6 +370,13 @@ impl AndroidShell {
         self.prev_ime_bottom_dp = next.ime_bottom;
         self.insets = next;
 
+        self.app.ui.compact_chrome = true;
+        if !next.ime_visible {
+            self.ribbon_pinned_during_ime = false;
+        }
+        let compact_landscape_ime = next.ime_visible && ctx.content_rect().height() < 520.0;
+        self.app.ui.hide_ribbon_strip = compact_landscape_ime && !self.ribbon_pinned_during_ime;
+
         let light_bars = !theme::Tokens::get(ctx).dark;
         if self.last_synced_bars_light != Some(light_bars) {
             self.bridge.set_light_system_bars(light_bars);
@@ -383,36 +392,58 @@ impl AndroidShell {
         let t = theme::Tokens::get(ui.ctx());
         let edge_frame = egui::Frame::NONE.fill(t.panel);
         if self.insets.top > 0.5 {
-            egui::Panel::top("android_safe_top").exact_size(self.insets.top).frame(egui::Frame::NONE.fill(t.title_bar)).show_inside(ui, |_| {});
+            egui::Panel::top("android_safe_top").exact_size(self.insets.top).frame(egui::Frame::NONE.fill(t.title_bar)).show(ui, |_| {});
         }
         if self.insets.bottom > 0.5 {
-            egui::Panel::bottom("android_safe_bottom")
-                .exact_size(self.insets.bottom)
-                .frame(egui::Frame::NONE.fill(t.status_bar))
-                .show_inside(ui, |_| {});
+            egui::Panel::bottom("android_safe_bottom").exact_size(self.insets.bottom).frame(egui::Frame::NONE.fill(t.status_bar)).show(ui, |_| {});
         }
         if self.insets.left > 0.5 {
-            egui::Panel::left("android_safe_left").exact_size(self.insets.left).frame(edge_frame).show_inside(ui, |_| {});
+            egui::Panel::left("android_safe_left").exact_size(self.insets.left).frame(edge_frame).show(ui, |_| {});
         }
         if self.insets.right > 0.5 {
-            egui::Panel::right("android_safe_right").exact_size(self.insets.right).frame(edge_frame).show_inside(ui, |_| {});
+            egui::Panel::right("android_safe_right").exact_size(self.insets.right).frame(edge_frame).show(ui, |_| {});
         }
     }
 
     fn draw_mobile_toolbar(&mut self, ui: &mut Ui) {
         let t = theme::Tokens::get(ui.ctx());
-        let frame = egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin::symmetric(6, 4));
-        egui::Panel::top("android_mobile_bar").exact_size(40.0).frame(frame).show_inside(ui, |ui| {
-            egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    self.draw_toolbar_buttons(ui);
+        let narrow = ui.available_width() < 620.0;
+        let height = if narrow { 66.0 } else { 38.0 };
+        let frame = egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin::symmetric(6, 3));
+        egui::Panel::top("android_mobile_bar").exact_size(height).frame(frame).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+            if narrow {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        self.draw_doc_buttons(ui);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.draw_theme_and_zoom_rtl(ui);
+                        });
+                    });
+                    ui.horizontal(|ui| {
+                        self.draw_edit_and_view_buttons(ui);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.draw_compact_status_pill(ui, t);
+                        });
+                    });
                 });
-            });
+            } else {
+                egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        self.draw_doc_buttons(ui);
+                        ui.separator();
+                        self.draw_edit_and_view_buttons(ui);
+                        ui.separator();
+                        self.draw_zoom_and_theme_ltr(ui);
+                        ui.separator();
+                        self.draw_compact_status_pill(ui, t);
+                    });
+                });
+            }
         });
     }
 
-    fn draw_toolbar_buttons(&mut self, ui: &mut Ui) {
+    fn draw_doc_buttons(&mut self, ui: &mut Ui) {
         if toolbar_pill(ui, "Open", false).clicked() {
             let _ = self.app.run("ui.openFileDialog", json!({}));
         }
@@ -424,12 +455,15 @@ impl AndroidShell {
             let cmd = if self.app.session.path.is_some() { "file.save" } else { "file.saveAs" };
             let _ = self.app.run(cmd, json!({}));
         }
-        if ui.add_enabled(self.app.session.can_undo(), egui::Button::new("Undo")).clicked() {
+        if ui.add_enabled(self.app.session.can_undo(), egui::Button::new("Undo").min_size(egui::vec2(28.0, 26.0))).clicked() {
             let _ = self.app.execute("edit.undo", json!({}));
         }
-        if ui.add_enabled(self.app.session.can_redo(), egui::Button::new("Redo")).clicked() {
+        if ui.add_enabled(self.app.session.can_redo(), egui::Button::new("Redo").min_size(egui::vec2(28.0, 26.0))).clicked() {
             let _ = self.app.execute("edit.redo", json!({}));
         }
+    }
+
+    fn draw_edit_and_view_buttons(&mut self, ui: &mut Ui) {
         if toolbar_pill(ui, "B", false).clicked() {
             let _ = self.app.execute("format.bold", json!({}));
         }
@@ -447,16 +481,50 @@ impl AndroidShell {
                 self.app.canvas.scroll_to_caret = true;
             }
         }
-        self.draw_view_buttons(ui);
-    }
-
-    fn draw_view_buttons(&mut self, ui: &mut Ui) {
         let is_web = self.app.session.view.mode == ViewMode::Web;
         let layout_label = if is_web { "Web" } else { "Page" };
         if toolbar_pill(ui, layout_label, is_web).clicked() {
             let cmd = if is_web { "view.printLayout" } else { "view.webLayout" };
             let _ = self.app.execute(cmd, json!({}));
         }
+        let ribbon_open = !self.app.ui.ribbon_collapsed && !self.app.ui.hide_ribbon_strip;
+        if toolbar_pill(ui, "Rib", ribbon_open).clicked() {
+            let compact_landscape_ime = self.insets.ime_visible && ui.ctx().content_rect().height() < 520.0;
+            if compact_landscape_ime && self.app.ui.hide_ribbon_strip {
+                self.ribbon_pinned_during_ime = true;
+                self.app.ui.hide_ribbon_strip = false;
+                self.app.ui.ribbon_collapsed = false;
+            } else {
+                self.app.ui.ribbon_collapsed = !self.app.ui.ribbon_collapsed;
+                if self.app.ui.ribbon_collapsed {
+                    self.ribbon_pinned_during_ime = false;
+                }
+            }
+        }
+    }
+
+    fn draw_theme_and_zoom_rtl(&mut self, ui: &mut Ui) {
+        if toolbar_pill(ui, self.theme_mode.short_label(), self.theme_mode != AndroidThemeMode::System).clicked() {
+            self.theme_mode = self.theme_mode.cycle_next();
+            self.theme_mode.apply(&mut self.app);
+            save_theme_mode(&self.files_dir, self.theme_mode);
+        }
+        let pct = (self.app.session.view.zoom * 100.0).round();
+        if toolbar_pill(ui, "+", false).clicked() {
+            let next = (pct + 15.0).clamp(25.0, 400.0);
+            let _ = self.app.execute("view.zoom", json!({ "value": next }));
+        }
+        let zoom_text = format!("{pct:.0}%");
+        if toolbar_pill(ui, &zoom_text, false).clicked() {
+            let _ = self.app.execute("view.zoom", json!({ "value": mobile::MOBILE_DEFAULT_ZOOM_PCT }));
+        }
+        if toolbar_pill(ui, "-", false).clicked() {
+            let next = (pct - 15.0).clamp(25.0, 400.0);
+            let _ = self.app.execute("view.zoom", json!({ "value": next }));
+        }
+    }
+
+    fn draw_zoom_and_theme_ltr(&mut self, ui: &mut Ui) {
         let pct = (self.app.session.view.zoom * 100.0).round();
         if toolbar_pill(ui, "-", false).clicked() {
             let next = (pct - 15.0).clamp(25.0, 400.0);
@@ -475,8 +543,21 @@ impl AndroidShell {
             self.theme_mode.apply(&mut self.app);
             save_theme_mode(&self.files_dir, self.theme_mode);
         }
-        if toolbar_pill(ui, "Ribbon", !self.app.ui.ribbon_collapsed).clicked() {
-            self.app.ui.ribbon_collapsed = !self.app.ui.ribbon_collapsed;
+    }
+
+    fn draw_compact_status_pill(&mut self, ui: &mut Ui, t: theme::Tokens) {
+        if !self.app.has_document() {
+            return;
+        }
+        let pages = self.app.session.layout().pages.len().max(1);
+        let page = self.app.canvas.viewed_page.unwrap_or(self.app.session.page_hint).min(pages - 1) + 1;
+        let words = self.app.cached_status_counts().words;
+        let label = format!("P{page}/{pages} · {words}w");
+        if ui
+            .add(egui::Button::new(RichText::new(label).size(11.5).color(t.text_dim)).fill(Color32::TRANSPARENT).min_size(egui::vec2(28.0, 26.0)))
+            .clicked()
+        {
+            let _ = self.app.run("ui.dialog", json!({ "name": "wordCount" }));
         }
     }
 }
@@ -491,11 +572,29 @@ impl eframe::App for AndroidShell {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(dark) = ime::system_night_mode() {
+            raw.system_theme = Some(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+        }
+
         let ime_events = to_egui_events(&ime::drain_inputs());
         raw.events.extend(ime_events);
 
+        let ppp = ctx.pixels_per_point();
+        if let Some((x_px, y_px)) = ime::take_mouse_hover_px()
+            && let Some(ev) = hover_to_egui_event(x_px, y_px, ppp)
+        {
+            raw.events.push(ev);
+        }
+        for (h, v) in ime::drain_wheel_deltas() {
+            if let Some(ev) = wheel_to_egui_event(h, v) {
+                raw.events.push(ev);
+            }
+        }
+
         let modal = self.modal_blocking_canvas(ctx);
-        let outcome = self.touch_filter.process(&mut raw.events, self.app.canvas.canvas_rect, self.select_mode, modal);
+        let pan_rect = document_pan_rect(self.app.canvas.viewport, self.app.canvas.canvas_rect);
+        let allow_pointer_select = self.select_mode || ime::pointer_is_mouse();
+        let outcome = self.touch_filter.process(&mut raw.events, pan_rect, allow_pointer_select, modal);
         if outcome.tapped_canvas {
             let now = ctx.input(|i| i.time);
             self.set_ime_wanted(true, now);
@@ -510,7 +609,7 @@ impl eframe::App for AndroidShell {
         self.draw_mobile_toolbar(ui);
         self.app.ui(ui);
 
-        let wants_dialog_kb = ctx.wants_keyboard_input() && !self.app.canvas.focused;
+        let wants_dialog_kb = ctx.egui_wants_keyboard_input() && !self.app.canvas.focused;
         if wants_dialog_kb && !self.prev_wants_kb {
             let now = ctx.input(|i| i.time);
             self.set_ime_wanted(true, now);

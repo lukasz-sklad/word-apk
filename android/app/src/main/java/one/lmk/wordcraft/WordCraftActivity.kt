@@ -4,11 +4,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.InputType
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -79,13 +81,61 @@ class WordCraftActivity : GameActivity() {
 
         installInsetsListener()
         installFocusGuard()
+        syncSystemNightMode(resources.configuration)
+        val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        setLightSystemBars(if (isNight) 0 else 1)
         handleViewIntent(intent)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        syncSystemNightMode(newConfig)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleViewIntent(intent)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        nativeOnPointerIsMouse(if (isMousePointerEvent(ev)) 1 else 0)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        nativeOnPointerIsMouse(if (isMousePointerEvent(ev)) 1 else 0)
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_ENTER -> {
+                if (ev.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
+                    nativeOnMouseHover(ev.x, ev.y)
+                }
+            }
+            MotionEvent.ACTION_SCROLL -> {
+                if (ev.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
+                    val h = ev.getAxisValue(MotionEvent.AXIS_HSCROLL)
+                    val v = ev.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                    nativeOnMouseWheel(h, v)
+                }
+            }
+        }
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    private fun syncSystemNightMode(config: Configuration) {
+        val night = when (config.uiMode and Configuration.UI_MODE_NIGHT_MASK) {
+            Configuration.UI_MODE_NIGHT_YES -> 1
+            Configuration.UI_MODE_NIGHT_NO -> 0
+            else -> -1
+        }
+        nativeOnSystemNightMode(night)
+    }
+
+    private fun isMousePointerEvent(ev: MotionEvent): Boolean {
+        if (ev.isFromSource(InputDevice.SOURCE_MOUSE) || ev.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
+            return true
+        }
+        return ev.pointerCount > 0 && ev.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE
     }
 
     override fun onResume() {
@@ -578,4 +628,8 @@ class WordCraftActivity : GameActivity() {
     private external fun nativeOnImeHidden()
     private external fun nativeOnFilePickerResult(pathsJoined: String, urisJoined: String, errorMsg: String)
     private external fun nativeOnOpenFilePath(stagingPath: String, contentUri: String)
+    private external fun nativeOnSystemNightMode(night: Int)
+    private external fun nativeOnPointerIsMouse(isMouse: Int)
+    private external fun nativeOnMouseWheel(hScroll: Float, vScroll: Float)
+    private external fun nativeOnMouseHover(xPx: Float, yPx: Float)
 }

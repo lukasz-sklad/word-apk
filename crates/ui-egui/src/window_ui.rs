@@ -306,6 +306,8 @@ impl WordApp {
             styles_pane_width: _,
             pane_places: _,
             pane_order: _,
+            compact_chrome: _,
+            hide_ribbon_strip: _,
             // Per window.
             tab,
             backstage,

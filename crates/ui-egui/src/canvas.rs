@@ -229,7 +229,7 @@ pub struct CanvasState {
     pub(crate) scroll_request: Option<egui::Vec2>,
     /// The viewport (the content's visible rect on screen) at the end of last frame; the
     /// drag-select edge auto-scroll decides this frame's scroll from it (#688).
-    pub(crate) viewport: Option<egui::Rect>,
+    pub viewport: Option<egui::Rect>,
     /// Synchronous Scrolling (#322): document points the partner window scrolled, still to apply…
     pub(crate) sync_in: f32,
     /// …and this window's own scrolling since the last frame, for the partner.
