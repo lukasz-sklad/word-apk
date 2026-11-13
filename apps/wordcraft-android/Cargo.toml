@@ -1,0 +1,34 @@
+[package]
+name = "wordcraft-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WordCraft Android application (eframe + wgpu + GameActivity)"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cognitive_complexity = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "deny"
+type_complexity = "allow"
+
+[lib]
+name = "wordcraft_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+egui = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
+wordcraft-doc = { workspace = true }
+wordcraft-engine = { workspace = true }
+wordcraft-ui-egui = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["game-activity"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-game-activity"] }
+jni = { version = "0.22" }
