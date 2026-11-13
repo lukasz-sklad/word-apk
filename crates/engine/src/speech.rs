@@ -851,6 +851,50 @@ impl Drop for ReadAloud {
 }
 
 /// How a sentence ended.
+/// Outcome reported by an embedder-provided text-to-speech backend.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlatformSpoken {
+    /// Finished speaking the utterance cleanly.
+    Done,
+    /// Interrupted because the user paused, stopped, or skipped.
+    Interrupted,
+    /// Preempted by another speaker; pauses and displays the explanation.
+    Halted(String),
+    /// Speech synthesis failed with a human-readable reason.
+    Failed(String),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PlatformSpoken {
+    fn into_spoken(self) -> Spoken {
+        match self {
+            Self::Done => Spoken::Done,
+            Self::Interrupted => Spoken::Interrupted,
+            Self::Halted(msg) => Spoken::Halted(msg),
+            Self::Failed(msg) => Spoken::Failed(msg),
+        }
+    }
+}
+
+/// Synchronous platform speech callback invoked on Read Aloud's worker thread.
+///
+/// Receives `(text, bcp47_lang, rate, should_abort)` and blocks until speech ends,
+/// `should_abort()` returns `true` (`Interrupted`), or playback fails.
+#[cfg(not(target_arch = "wasm32"))]
+pub type PlatformSpeaker = fn(&str, Option<&str>, f32, &dyn Fn() -> bool) -> PlatformSpoken;
+
+#[cfg(not(target_arch = "wasm32"))]
+static PLATFORM_SPEAKER: std::sync::OnceLock<PlatformSpeaker> = std::sync::OnceLock::new();
+
+/// Registers the host platform speech backend (for example Android `TextToSpeech`).
+///
+/// Intended to be called once at startup before Read Aloud runs.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_platform_speaker(speaker: PlatformSpeaker) {
+    let _ = PLATFORM_SPEAKER.set(speaker);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 enum Spoken {
     Done,
@@ -985,6 +1029,9 @@ fn windows_speech(system_root: Option<std::ffi::OsString>, rate: f32, lang: Opti
 /// the program fails with the sentence's voice, the default voice says it instead.
 #[cfg(not(target_arch = "wasm32"))]
 fn speak(text: &str, lang: Option<&str>, rate: f32, changed: &dyn Fn() -> bool) -> Spoken {
+    if let Some(speaker) = PLATFORM_SPEAKER.get() {
+        return speaker(text, lang, rate, changed).into_spoken();
+    }
     let (spoken, gave_voice, exited_ok) = speak_with(text, lang, rate, changed);
     if retry_without_voice(gave_voice, exited_ok) {
         return speak_with(text, None, rate, changed).0;

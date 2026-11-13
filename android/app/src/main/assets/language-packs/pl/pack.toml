@@ -1,0 +1,39 @@
+locale = "pl"
+name = "Polski"
+licence = "Apache-2.0 AND MIT"
+class = "Embeddable"
+version = "20467b63558f04fe075e83aaea501bd10f7fa684"
+upstream = "https://github.com/LibreOffice/dictionaries/tree/4f1df64b2e8e14751aa7c2205d170ca016071315/pl_PL"
+licence_texts = ["Apache-2.0.txt", "MIT.txt"]
+
+[[source]]
+file = "spelling.aff"
+url = "https://raw.githubusercontent.com/LibreOffice/dictionaries/4f1df64b2e8e14751aa7c2205d170ca016071315/pl_PL/pl_PL.aff"
+commit = "4f1df64b2e8e14751aa7c2205d170ca016071315"
+sha256 = "82973651651aa930335c865b339b98db376ca3dbf3a661b70b9eeb71fdf41dca"
+licence = "Apache-2.0"
+class = "Embeddable"
+
+[[source]]
+file = "spelling.dic"
+url = "https://raw.githubusercontent.com/LibreOffice/dictionaries/4f1df64b2e8e14751aa7c2205d170ca016071315/pl_PL/pl_PL.dic"
+commit = "4f1df64b2e8e14751aa7c2205d170ca016071315"
+sha256 = "c0848440599eb88e5aca500418d5f389e562ec2c157b63dbe39d354658ffba49"
+licence = "Apache-2.0"
+class = "Embeddable"
+
+[[source]]
+file = "hyphenation.pat"
+url = "https://raw.githubusercontent.com/hyphenation/tex-hyphen/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-pl.tex"
+commit = "5684c0f51c0b81133db2efbe60a408b4155a3ff5"
+sha256 = "83ddbbd21bc06a44bc4f4a4c49c38782e809cff5f026b764c044daa29e818843"
+licence = "MIT"
+class = "Embeddable"
+
+[[source]]
+file = "LICENCES/README_pl_PL.txt"
+url = "https://raw.githubusercontent.com/LibreOffice/dictionaries/4f1df64b2e8e14751aa7c2205d170ca016071315/pl_PL/README_pl_PL.txt"
+commit = "4f1df64b2e8e14751aa7c2205d170ca016071315"
+sha256 = "e691ed1e79934293b0cd6996a14af1520ff893c02f920c09ed0c90aa5f0a8abc"
+licence = "Apache-2.0"
+class = "Embeddable"

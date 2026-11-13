@@ -498,3 +498,12 @@ fn many_citations_are_looked_up_quickly() {
     let hits = (0..200_000).filter(|&off| spans.contains(&Pos::body(0, off))).count();
     assert_eq!(hits, 100_000);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn platform_spoken_maps_every_outcome() {
+    assert!(matches!(PlatformSpoken::Done.into_spoken(), Spoken::Done));
+    assert!(matches!(PlatformSpoken::Interrupted.into_spoken(), Spoken::Interrupted));
+    assert!(matches!(PlatformSpoken::Halted("busy".into()).into_spoken(), Spoken::Halted(m) if m == "busy"));
+    assert!(matches!(PlatformSpoken::Failed("no engine".into()).into_spoken(), Spoken::Failed(m) if m == "no engine"));
+}

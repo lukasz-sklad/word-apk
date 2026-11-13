@@ -312,10 +312,14 @@ pub fn system_lang() -> Lang {
     *SYSTEM.get_or_init(detect_system_lang)
 }
 
+fn lang_from_override(raw: &str) -> Option<Lang> {
+    first_supported(raw.split(',').map(str::trim))
+}
+
 fn detect_system_lang() -> Lang {
     // An explicit override, then the platform's preferred UI languages (Windows display language,
     // macOS preferred languages, `LC_ALL`/`LC_MESSAGES`/`LANG` on Unix, the browser on the web).
-    if let Some(l) = std::env::var("WORDCRAFT_LANGUAGE").ok().and_then(|v| lang_from_tag(&v)) {
+    if let Some(l) = std::env::var("WORDCRAFT_LANGUAGE").ok().and_then(|v| lang_from_override(&v)) {
         return l;
     }
     let tags: Vec<String> = sys_locale::get_locales().take(16).collect();
@@ -570,5 +574,7 @@ mod picker_order_tests {
         assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
         assert_eq!(name_sort_key("Čeština"), "cestina");
         assert_eq!(name_sort_key("Türkçe"), "turkce");
+        assert_eq!(lang_from_override("pl-PL,en-US").map(|l| l.code()), Some("pl"));
+        assert_eq!(lang_from_override("xx-XX, pl").map(|l| l.code()), Some("pl"));
     }
 }

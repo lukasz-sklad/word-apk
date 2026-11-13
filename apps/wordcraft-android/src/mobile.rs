@@ -584,8 +584,8 @@ impl AndroidThemeMode {
 /// Applies mobile-friendly defaults on WordCraft Android.
 ///
 /// Disables online startup update checks, skips desktop start-screen Backstage, collapses the full
-/// desktop ribbon when first launched so content fits on a phone viewport, and ensures documents
-/// open in readable phone-width Web Layout unless the user switched back to Print Layout.
+/// desktop ribbon when first launched so content fits on a phone viewport, and defaults to
+/// Document (`Print`) view on first launch so pages render at real proportions rather than stretched web text.
 pub fn apply_initial_mobile_defaults(app: &mut WordApp, had_saved_prefs: bool) {
     app.set_startup_update_check(false);
     app.ui.start_screen = false;
@@ -593,13 +593,83 @@ pub fn apply_initial_mobile_defaults(app: &mut WordApp, had_saved_prefs: bool) {
     app.ui.compact_chrome = true;
     if !had_saved_prefs {
         app.ui.ribbon_collapsed = true;
+        if app.session.view.mode != ViewMode::Print {
+            let _ = app.execute("view.printLayout", json!({}));
+        }
     }
-    if app.session.view.mode != ViewMode::Web {
-        let _ = app.execute("view.webLayout", json!({}));
+}
+
+/// Narrow viewport threshold (in logical dp) below which initial Document view uses Fit-to-Page-Width.
+pub const NARROW_VIEWPORT_DP: f32 = 760.0;
+
+/// Applies responsive initial zoom on narrow phone screens in Document (`Print`) mode without overriding manual zoom.
+pub fn apply_initial_viewport_zoom(app: &mut WordApp, avail_width_dp: f32) {
+    if !avail_width_dp.is_finite() || avail_width_dp <= 0.0 {
+        return;
     }
-    if !app.session.view.zoom.is_finite() || (app.session.view.zoom - 1.0).abs() < 0.02 {
-        let _ = app.execute("view.zoom", json!({ "value": MOBILE_DEFAULT_ZOOM_PCT }));
+    if app.session.view.mode == ViewMode::Print
+        && app.session.view.fit.is_empty()
+        && (app.session.view.zoom - 1.0).abs() < 0.01
+        && avail_width_dp < NARROW_VIEWPORT_DP
+    {
+        let _ = app.execute("view.pageWidth", json!({}));
     }
+}
+
+/// Tracks smart Play/Pause/Resume/Read-Selection behaviour for the mobile `Czytaj` (`Read`) pill.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CzytajController {
+    paused_selection: Option<(u64, wordcraft_doc::Pos, wordcraft_doc::Pos)>,
+}
+
+impl CzytajController {
+    /// Toggles Read Aloud for the active document:
+    /// - If currently playing on this document, pauses and remembers the exact sentence position.
+    /// - If paused on this document without a newly changed selection, resumes from that position.
+    /// - Otherwise reads the non-empty selection if present, or reads from the beginning to the end.
+    pub fn toggle(&mut self, app: &mut WordApp) {
+        let doc_id = app.session.document_id();
+        let state = app.session.read_aloud.state();
+        let same_doc = app.session.read_aloud.document == Some(doc_id);
+        if same_doc && state == wordcraft_engine::speech::State::Playing {
+            let _ = app.execute("readAloud.playPause", json!({}));
+            return;
+        }
+        let has_sel = !app.session.sel.is_collapsed();
+        let sel_pair = app.session.sel.ordered();
+        let same_paused_sel = self.paused_selection.as_ref() == Some(&(doc_id, sel_pair.0.clone(), sel_pair.1.clone()));
+        if same_doc && state == wordcraft_engine::speech::State::Paused && (!has_sel || same_paused_sel) {
+            app.session.read_aloud.open = true;
+            let _ = app.execute("readAloud.playPause", json!({}));
+            return;
+        }
+        self.start_reading(app, doc_id, has_sel, sel_pair);
+    }
+
+    fn start_reading(&mut self, app: &mut WordApp, doc_id: u64, has_sel: bool, sel_pair: (wordcraft_doc::Pos, wordcraft_doc::Pos)) {
+        let (from, to, next_sel) = if has_sel {
+            let (a, b) = sel_pair;
+            (a.clone(), Some(b.clone()), Some((doc_id, a, b)))
+        } else {
+            (app.session.doc.start_of(wordcraft_doc::StoryRef::Body), None, None)
+        };
+        let queue = wordcraft_engine::speech::sentences(&app.session.doc, &from, to.as_ref(), app.session.read_aloud.skip_citations);
+        if queue.is_empty() {
+            self.paused_selection = None;
+            let msg = if wordcraft_ui_egui::i18n::current().code() == "pl" { "Brak tekstu do czytania" } else { "Nothing to read" };
+            app.status(msg);
+            return;
+        }
+        self.paused_selection = next_sel;
+        app.session.read_aloud.open = true;
+        app.session.read_aloud.document = Some(doc_id);
+        app.session.read_aloud.start(queue);
+    }
+}
+
+/// Returns true when Read Aloud is actively speaking the currently visible document.
+pub fn czytaj_is_playing(app: &WordApp) -> bool {
+    app.session.read_aloud.state() == wordcraft_engine::speech::State::Playing && app.session.read_aloud.document == Some(app.session.document_id())
 }
 
 /// Sanitizes an arbitrary Android SAF display name for local staging storage.
@@ -777,7 +847,15 @@ mod tests {
         assert!(!app.ui.start_screen);
         assert!(app.ui.ribbon_collapsed);
         assert!(app.ui.compact_chrome);
-        assert_eq!(app.session.view.mode, ViewMode::Web);
+        assert_eq!(app.session.view.mode, ViewMode::Print);
+
+        apply_initial_viewport_zoom(&mut app, 411.0);
+        assert_eq!(app.session.view.fit, "pageWidth");
+
+        let mut wide_app = test_app();
+        apply_initial_mobile_defaults(&mut wide_app, false);
+        apply_initial_viewport_zoom(&mut wide_app, 1280.0);
+        assert!(wide_app.session.view.fit.is_empty());
 
         let mut mode = AndroidThemeMode::System;
         mode = mode.cycle_next();
@@ -871,5 +949,52 @@ mod tests {
         assert!(!effective_ime_wanted(true, true));
         assert!(!effective_ime_wanted(false, false));
         assert!(!effective_ime_wanted(false, true));
+    }
+
+    #[test]
+    fn czytaj_reads_from_start_remembers_pause_and_supports_selection() {
+        use wordcraft_engine::speech::{Backend, State};
+
+        let mut app = test_app();
+        app.session.read_aloud.backend = Backend::Hold;
+        let _ = app.execute("text.insert", json!({ "text": "Pierwsze zdanie. Drugie zdanie. Trzecie zdanie." }));
+        let _ = app.execute("cursor.move", json!({ "target": "end" }));
+
+        let mut czytaj = CzytajController::default();
+
+        // Starts from beginning even though caret is at the end (no selection).
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+        assert!(czytaj_is_playing(&app));
+        assert_eq!(app.session.read_aloud.progress(), (0, 3));
+        assert_eq!(app.session.read_aloud.current().map(|u| u.text).as_deref(), Some("Pierwsze zdanie."));
+
+        // Advance to second sentence, pause, and confirm resume continues from sentence 2.
+        let _ = app.execute("readAloud.next", json!({}));
+        assert_eq!(app.session.read_aloud.progress(), (1, 3));
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Paused);
+        assert!(!czytaj_is_playing(&app));
+
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+        assert_eq!(app.session.read_aloud.progress(), (1, 3));
+        assert_eq!(app.session.read_aloud.current().map(|u| u.text).as_deref(), Some("Drugie zdanie."));
+
+        // Pause, select only "Trzecie zdanie.", toggle starts reading that selection cleanly.
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Paused);
+        let _ = app.execute("select.text", json!({ "text": "Trzecie zdanie." }));
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+        assert_eq!(app.session.read_aloud.progress(), (0, 1));
+        assert_eq!(app.session.read_aloud.current().map(|u| u.text).as_deref(), Some("Trzecie zdanie."));
+
+        // Toggling pause then resume with the same selection still active resumes instead of restarting.
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Paused);
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+        assert_eq!(app.session.read_aloud.current().map(|u| u.text).as_deref(), Some("Trzecie zdanie."));
     }
 }

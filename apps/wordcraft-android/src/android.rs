@@ -23,12 +23,13 @@ use serde_json::json;
 use wordcraft_doc::Document;
 use wordcraft_engine::Session;
 use wordcraft_layout::ViewMode;
-use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, UiState, WordApp, theme};
+use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, UiState, WordApp, i18n, theme};
 
 use crate::ime;
 use crate::mobile::{
-    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, document_pan_rect, effective_ime_wanted,
-    hover_to_egui_event, prefs_write_atomic, to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
+    self, AndroidThemeMode, CzytajController, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, apply_initial_viewport_zoom,
+    czytaj_is_playing, document_pan_rect, effective_ime_wanted, hover_to_egui_event, prefs_write_atomic, to_egui_events, utf8_byte_to_utf16_offset,
+    wheel_to_egui_event,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -241,6 +242,8 @@ struct AndroidShell {
     last_synced_bars_light: Option<bool>,
     last_ime_snapshot: Option<(String, usize, usize)>,
     last_saved_prefs_json: String,
+    czytaj: CzytajController,
+    applied_initial_viewport_zoom: bool,
 }
 
 impl AndroidShell {
@@ -278,6 +281,8 @@ impl AndroidShell {
             last_synced_bars_light: None,
             last_ime_snapshot: None,
             last_saved_prefs_json: initial_prefs,
+            czytaj: CzytajController::default(),
+            applied_initial_viewport_zoom: false,
         }
     }
 
@@ -338,6 +343,7 @@ impl AndroidShell {
                 self.app.status(format!("Open failed: {e}"));
             } else {
                 apply_initial_mobile_defaults(&mut self.app, true);
+                self.applied_initial_viewport_zoom = false;
             }
         }
     }
@@ -490,10 +496,20 @@ impl AndroidShell {
             }
         }
         let is_web = self.app.session.view.mode == ViewMode::Web;
-        let layout_label = if is_web { "Web" } else { "Page" };
+        let layout_label = if is_web {
+            "Web"
+        } else if i18n::current().code() == "pl" {
+            "Dok"
+        } else {
+            "Page"
+        };
         if toolbar_pill(ui, layout_label, is_web).clicked() {
             let cmd = if is_web { "view.printLayout" } else { "view.webLayout" };
             let _ = self.app.execute(cmd, json!({}));
+        }
+        let czytaj_label = if i18n::current().code() == "pl" { "Czytaj" } else { "Read" };
+        if toolbar_pill(ui, czytaj_label, czytaj_is_playing(&self.app)).clicked() {
+            self.czytaj.toggle(&mut self.app);
         }
         let ribbon_open = !self.app.ui.ribbon_collapsed && !self.app.ui.hide_ribbon_strip;
         if toolbar_pill(ui, "Rib", ribbon_open).clicked() {
@@ -532,7 +548,7 @@ impl AndroidShell {
         }
         let zoom_text = format!("{pct:.0}%");
         if toolbar_pill(ui, &zoom_text, false).clicked() {
-            let _ = self.app.execute("view.zoom", json!({ "value": mobile::MOBILE_DEFAULT_ZOOM_PCT }));
+            self.reset_default_zoom(ui);
         }
         if toolbar_pill(ui, "-", false).clicked() {
             let next = (pct - 15.0).clamp(25.0, 400.0);
@@ -548,7 +564,7 @@ impl AndroidShell {
         }
         let zoom_text = format!("{pct:.0}%");
         if toolbar_pill(ui, &zoom_text, false).clicked() {
-            let _ = self.app.execute("view.zoom", json!({ "value": mobile::MOBILE_DEFAULT_ZOOM_PCT }));
+            self.reset_default_zoom(ui);
         }
         if toolbar_pill(ui, "+", false).clicked() {
             let next = (pct + 15.0).clamp(25.0, 400.0);
@@ -558,6 +574,16 @@ impl AndroidShell {
             self.theme_mode = self.theme_mode.cycle_next();
             self.theme_mode.apply(&mut self.app);
             save_theme_mode(&self.files_dir, self.theme_mode);
+        }
+    }
+
+    fn reset_default_zoom(&mut self, ui: &Ui) {
+        let avail_w = (ui.ctx().content_rect().width() - self.insets.left - self.insets.right).max(0.0);
+        if self.app.session.view.mode == ViewMode::Print && avail_w < mobile::NARROW_VIEWPORT_DP {
+            let _ = self.app.execute("view.pageWidth", json!({}));
+        } else {
+            let value = if self.app.session.view.mode == ViewMode::Print { 100.0 } else { mobile::MOBILE_DEFAULT_ZOOM_PCT };
+            let _ = self.app.execute("view.zoom", json!({ "value": value }));
         }
     }
 
@@ -623,6 +649,11 @@ impl eframe::App for AndroidShell {
         let ctx = ui.ctx().clone();
         self.draw_safe_insets(ui);
         self.draw_mobile_toolbar(ui);
+        if !self.applied_initial_viewport_zoom {
+            self.applied_initial_viewport_zoom = true;
+            let avail_w = (ui.available_width() - self.insets.left - self.insets.right).max(0.0);
+            apply_initial_viewport_zoom(&mut self.app, avail_w);
+        }
         self.app.ui(ui);
 
         let wants_dialog_kb = ctx.egui_wants_keyboard_input() && !self.app.canvas.focused;
@@ -640,6 +671,7 @@ impl eframe::App for AndroidShell {
     }
 
     fn on_exit(&mut self) {
+        let _ = self.app.execute("readAloud.stop", json!({}));
         self.app.session.finish_recovery();
         if let Ok(mut saf) = self.saf.lock() {
             let _ = saf.flush_changed_outputs(&self.bridge);
@@ -732,7 +764,11 @@ pub extern "Rust" fn android_main(app: AndroidApp) {
             return;
         }
     };
+    ime::bind_tts_bridge(bridge.vm.clone(), Arc::clone(&bridge.activity));
+    wordcraft_engine::speech::set_platform_speaker(ime::speak_tts);
+
     let files_dir = app.internal_data_path().unwrap_or_else(|| PathBuf::from("/data/local/tmp/wordcraft"));
+    wordcraft_engine::packs::use_font_store_in(files_dir.join("font-store"), true);
     let mut options = NativeOptions { android_app: Some(app), ..Default::default() };
     configure_mobile_wgpu(&mut options);
 

@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.InputType
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -29,11 +31,28 @@ import androidx.core.view.inputmethod.EditorInfoCompat
 import com.google.androidgamesdk.GameActivity
 import java.io.File
 import java.io.FileInputStream
+import java.util.Locale
 import java.util.UUID
 
 class WordCraftActivity : GameActivity() {
 
     companion object {
+        private const val TTS_INIT_NONE = 0
+        private const val TTS_INIT_PENDING = 1
+        private const val TTS_INIT_READY = 2
+        private const val TTS_INIT_FAILED = -1
+
+        private const val TTS_STATE_SPEAKING = 0
+        private const val TTS_STATE_DONE = 1
+        private const val TTS_STATE_STOPPED = 2
+        private const val TTS_STATE_FAILED = -1
+
+        private const val TTS_SPEAK_STARTED = 0
+        private const val TTS_SPEAK_INITIALIZING = 1
+        private const val TTS_SPEAK_FAILED = -1
+
+        private const val GOOGLE_TTS_ENGINE = "com.google.android.tts"
+
         init {
             System.loadLibrary("wordcraft_android")
         }
@@ -56,6 +75,17 @@ class WordCraftActivity : GameActivity() {
 
     private var activeConnection: WordCraftInputConnection? = null
     private var pendingSaveSuggestedName = "Document.docx"
+
+    private val ttsLock = Any()
+    private var tts: TextToSpeech? = null
+    private var ttsInitState = TTS_INIT_NONE
+    private var ttsUsingGoogleFallback = false
+    @Volatile
+    private var ttsLastErrorMsg = ""
+    @Volatile
+    private var activeUtteranceId = ""
+    @Volatile
+    private var activeUtteranceState = TTS_STATE_STOPPED
 
     private val openSingleLauncher: ActivityResultLauncher<Array<String>> =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -86,7 +116,20 @@ class WordCraftActivity : GameActivity() {
         syncSystemNightMode(resources.configuration)
         val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         setLightSystemBars(if (isNight) 0 else 1)
+        ensureTtsInitializedAsync(useGoogleFallback = false)
         handleViewIntent(intent)
+    }
+
+    override fun onDestroy() {
+        synchronized(ttsLock) {
+            activeUtteranceId = ""
+            activeUtteranceState = TTS_STATE_STOPPED
+            tts?.stop()
+            tts?.shutdown()
+            tts = null
+            ttsInitState = TTS_INIT_NONE
+        }
+        super.onDestroy()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -355,6 +398,161 @@ class WordCraftActivity : GameActivity() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         cm.setPrimaryClip(ClipData.newPlainText("WordCraft", text))
     }
+
+    private fun ensureTtsInitializedAsync(useGoogleFallback: Boolean) {
+        synchronized(ttsLock) {
+            if (isDestroyed || isFinishing) {
+                ttsInitState = TTS_INIT_FAILED
+                return
+            }
+            if (!useGoogleFallback && (ttsInitState == TTS_INIT_READY || ttsInitState == TTS_INIT_PENDING)) {
+                return
+            }
+            ttsInitState = TTS_INIT_PENDING
+            ttsUsingGoogleFallback = useGoogleFallback
+            ttsLastErrorMsg = ""
+        }
+        runOnUiThread {
+            synchronized(ttsLock) {
+                if (isDestroyed || isFinishing) {
+                    ttsInitState = TTS_INIT_FAILED
+                    return@runOnUiThread
+                }
+                tts?.stop()
+                tts?.shutdown()
+                tts = null
+                lateinit var created: TextToSpeech
+                val listener = TextToSpeech.OnInitListener { status ->
+                    onTtsInitStatus(created, status)
+                }
+                created = if (useGoogleFallback) {
+                    TextToSpeech(applicationContext, listener, GOOGLE_TTS_ENGINE)
+                } else {
+                    TextToSpeech(applicationContext, listener)
+                }
+                tts = created
+            }
+        }
+    }
+
+    private fun onTtsInitStatus(instance: TextToSpeech, status: Int) {
+        var retryWithGoogle = false
+        synchronized(ttsLock) {
+            if (tts !== instance) {
+                return
+            }
+            if (status == TextToSpeech.SUCCESS) {
+                instance.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+
+                    override fun onDone(utteranceId: String?) {
+                        if (utteranceId != null && utteranceId == activeUtteranceId) {
+                            activeUtteranceState = TTS_STATE_DONE
+                        }
+                    }
+
+                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                        if (utteranceId != null && utteranceId == activeUtteranceId) {
+                            activeUtteranceState = TTS_STATE_STOPPED
+                        }
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    @Suppress("OVERRIDE_DEPRECATION")
+                    override fun onError(utteranceId: String?) {
+                        if (utteranceId != null && utteranceId == activeUtteranceId) {
+                            ttsLastErrorMsg = "Android TextToSpeech synthesis error"
+                            activeUtteranceState = TTS_STATE_FAILED
+                        }
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        if (utteranceId != null && utteranceId == activeUtteranceId) {
+                            ttsLastErrorMsg = "Android TextToSpeech synthesis error ($errorCode)"
+                            activeUtteranceState = TTS_STATE_FAILED
+                        }
+                    }
+                })
+                ttsInitState = TTS_INIT_READY
+                ttsLastErrorMsg = ""
+            } else if (!ttsUsingGoogleFallback) {
+                ttsInitState = TTS_INIT_PENDING
+                retryWithGoogle = true
+            } else {
+                ttsLastErrorMsg = "Android TextToSpeech initialization failed ($status)"
+                ttsInitState = TTS_INIT_FAILED
+            }
+        }
+        if (retryWithGoogle) {
+            ensureTtsInitializedAsync(useGoogleFallback = true)
+        }
+    }
+
+    private fun applyTtsLocale(engine: TextToSpeech, langTag: String) {
+        val candidates = if (langTag.isNotEmpty()) {
+            val requested = Locale.forLanguageTag(langTag)
+            if (requested.language.isNotEmpty()) {
+                listOf(requested, Locale.forLanguageTag(requested.language), Locale.getDefault())
+            } else {
+                listOf(Locale.getDefault())
+            }
+        } else {
+            listOf(Locale.getDefault())
+        }
+        for (loc in candidates) {
+            if (engine.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE) {
+                engine.language = loc
+                return
+            }
+        }
+    }
+
+    @Suppress("unused")
+    fun ttsSpeak(utteranceId: String, text: String, langTag: String, rate: Float): Int {
+        synchronized(ttsLock) {
+            when (ttsInitState) {
+                TTS_INIT_NONE -> {
+                    ensureTtsInitializedAsync(useGoogleFallback = false)
+                    return TTS_SPEAK_INITIALIZING
+                }
+                TTS_INIT_PENDING -> return TTS_SPEAK_INITIALIZING
+                TTS_INIT_FAILED -> {
+                    if (ttsLastErrorMsg.isEmpty()) {
+                        ttsLastErrorMsg = "Android TextToSpeech unavailable"
+                    }
+                    return TTS_SPEAK_FAILED
+                }
+            }
+            val engine = tts ?: return TTS_SPEAK_FAILED
+            applyTtsLocale(engine, langTag)
+            engine.setSpeechRate(rate.coerceIn(0.5f, 3.0f))
+            activeUtteranceId = utteranceId
+            activeUtteranceState = TTS_STATE_SPEAKING
+            val res = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+            if (res == TextToSpeech.ERROR) {
+                activeUtteranceState = TTS_STATE_FAILED
+                ttsLastErrorMsg = "Android TextToSpeech could not queue utterance"
+                return TTS_SPEAK_FAILED
+            }
+            return TTS_SPEAK_STARTED
+        }
+    }
+
+    @Suppress("unused")
+    fun ttsStatus(utteranceId: String): Int =
+        if (activeUtteranceId == utteranceId) activeUtteranceState else TTS_STATE_STOPPED
+
+    @Suppress("unused")
+    fun ttsStop() {
+        synchronized(ttsLock) {
+            activeUtteranceId = ""
+            activeUtteranceState = TTS_STATE_STOPPED
+            tts?.stop()
+        }
+    }
+
+    @Suppress("unused")
+    fun ttsLastError(): String = ttsLastErrorMsg
 
     private fun handleViewIntent(intent: Intent?) {
         if (intent == null || intent.action != Intent.ACTION_VIEW) {

@@ -5,14 +5,17 @@
 //! thread and wakes `eframe` on the `android_main` thread.
 
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Mutex, Once};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Once, OnceLock};
+use std::time::{Duration, Instant};
 
 use android_activity::AndroidAppWaker;
 use jni::errors::LogErrorAndDefault;
-use jni::objects::{JObject, JString};
+use jni::objects::{JObject, JString, JValue};
+use jni::refs::Global;
 use jni::sys::{jfloat, jint};
-use jni::{Env, EnvUnowned};
+use jni::{Env, EnvUnowned, JavaVM, jni_sig, jni_str};
+use wordcraft_engine::speech::PlatformSpoken;
 use wordcraft_ui_egui::FileDialogAnswer;
 
 use crate::mobile::{AndroidInput, AndroidKey, MAX_IME_BYTES, SafeInsetsPx, truncate_utf8_bytes};
@@ -199,6 +202,140 @@ pub fn take_file_answer() -> Option<PickedAnswer> {
 /// Drains incoming `ACTION_VIEW` document staging requests.
 pub fn drain_pending_opens() -> Vec<PendingOpen> {
     QUEUES.lock().map(|mut q| std::mem::take(&mut q.pending_opens)).unwrap_or_default()
+}
+
+#[derive(Clone)]
+struct TtsBridge {
+    vm: JavaVM,
+    activity: Arc<Global<JObject<'static>>>,
+}
+
+static TTS_BRIDGE: OnceLock<TtsBridge> = OnceLock::new();
+static NEXT_UTTERANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+const TTS_STATUS_SPEAKING: i32 = 0;
+const TTS_STATUS_DONE: i32 = 1;
+const TTS_STATUS_STOPPED: i32 = 2;
+const TTS_SPEAK_STARTED: i32 = 0;
+const TTS_SPEAK_INITIALIZING: i32 = 1;
+
+/// Registers the `JavaVM` and `WordCraftActivity` global reference used for Android `TextToSpeech`.
+pub fn bind_tts_bridge(vm: JavaVM, activity: Arc<Global<JObject<'static>>>) {
+    let _ = TTS_BRIDGE.set(TtsBridge { vm, activity });
+}
+
+fn jni_tts_speak(bridge: &TtsBridge, utterance_id: &str, text: &str, lang: &str, rate: f32) -> Result<i32, String> {
+    bridge
+        .vm
+        .attach_current_thread(|env| -> jni::errors::Result<i32> {
+            let id_j = env.new_string(utterance_id)?;
+            let text_j = env.new_string(text)?;
+            let lang_j = env.new_string(lang)?;
+            let code = env
+                .call_method(
+                    &*bridge.activity,
+                    jni_str!("ttsSpeak"),
+                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;F)I"),
+                    &[JValue::Object(&id_j), JValue::Object(&text_j), JValue::Object(&lang_j), JValue::Float(rate as jfloat)],
+                )?
+                .i()?;
+            Ok(code)
+        })
+        .map_err(|e| format!("Android TTS JNI error: {e}"))
+}
+
+fn jni_tts_status(bridge: &TtsBridge, utterance_id: &str) -> Result<i32, String> {
+    bridge
+        .vm
+        .attach_current_thread(|env| -> jni::errors::Result<i32> {
+            let id_j = env.new_string(utterance_id)?;
+            env.call_method(&*bridge.activity, jni_str!("ttsStatus"), jni_sig!("(Ljava/lang/String;)I"), &[JValue::Object(&id_j)])?.i()
+        })
+        .map_err(|e| format!("Android TTS status error: {e}"))
+}
+
+fn jni_tts_stop(bridge: &TtsBridge) {
+    let _ = bridge.vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let _ = env.call_method(&*bridge.activity, jni_str!("ttsStop"), jni_sig!("()V"), &[])?;
+        Ok(())
+    });
+}
+
+fn jni_tts_last_error(bridge: &TtsBridge) -> String {
+    bridge
+        .vm
+        .attach_current_thread(|env| -> jni::errors::Result<String> {
+            let obj = env.call_method(&*bridge.activity, jni_str!("ttsLastError"), jni_sig!("()Ljava/lang/String;"), &[])?.l()?;
+            if obj.is_null() {
+                return Ok(String::new());
+            }
+            let s = env.cast_local::<JString<'_>>(obj)?;
+            s.try_to_string(env)
+        })
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Android TextToSpeech unavailable".into())
+}
+
+fn start_tts_with_init_wait(
+    bridge: &TtsBridge,
+    id: &str,
+    text: &str,
+    lang: &str,
+    rate: f32,
+    changed: &dyn Fn() -> bool,
+) -> Result<(), PlatformSpoken> {
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        if changed() {
+            return Err(PlatformSpoken::Interrupted);
+        }
+        match jni_tts_speak(bridge, id, text, lang, rate) {
+            Ok(TTS_SPEAK_STARTED) => return Ok(()),
+            Ok(TTS_SPEAK_INITIALIZING) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(TTS_SPEAK_INITIALIZING) => {
+                return Err(PlatformSpoken::Failed("Android TextToSpeech initialization timed out".into()));
+            }
+            Ok(_) => return Err(PlatformSpoken::Failed(jni_tts_last_error(bridge))),
+            Err(e) => return Err(PlatformSpoken::Failed(e)),
+        }
+    }
+}
+
+/// Speaks one utterance through Android's `TextToSpeech` (Google TTS on Pixel devices).
+pub fn speak_tts(text: &str, lang: Option<&str>, rate: f32, changed: &dyn Fn() -> bool) -> PlatformSpoken {
+    let Some(bridge) = TTS_BRIDGE.get() else {
+        return PlatformSpoken::Failed("Android TTS bridge not initialized".into());
+    };
+    let id = format!("wc_{}", NEXT_UTTERANCE_ID.fetch_add(1, Ordering::Relaxed));
+    let clean_rate = if rate.is_finite() { rate.clamp(0.5, 3.0) } else { 1.0 };
+    if let Err(early) = start_tts_with_init_wait(bridge, &id, text, lang.unwrap_or(""), clean_rate, changed) {
+        if matches!(early, PlatformSpoken::Interrupted) {
+            jni_tts_stop(bridge);
+        }
+        return early;
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if changed() {
+            jni_tts_stop(bridge);
+            return PlatformSpoken::Interrupted;
+        }
+        match jni_tts_status(bridge, &id) {
+            Ok(TTS_STATUS_SPEAKING) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Ok(TTS_STATUS_SPEAKING) => {
+                jni_tts_stop(bridge);
+                return PlatformSpoken::Failed("Android TextToSpeech utterance timed out".into());
+            }
+            Ok(TTS_STATUS_DONE) => return PlatformSpoken::Done,
+            Ok(TTS_STATUS_STOPPED) => return PlatformSpoken::Interrupted,
+            Ok(_) => return PlatformSpoken::Failed(jni_tts_last_error(bridge)),
+            Err(e) => return PlatformSpoken::Failed(e),
+        }
+    }
 }
 
 fn read_jstring(env: &mut Env<'_>, s: &JString<'_>) -> jni::errors::Result<String> {

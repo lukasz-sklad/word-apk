@@ -60,6 +60,9 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Check out craft-i18n
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@main
+
       - name: Extract App Version
         run: |
           VERSION=$(grep 'versionName = ' android/app/build.gradle.kts | awk -F'"' '{print $2}')
