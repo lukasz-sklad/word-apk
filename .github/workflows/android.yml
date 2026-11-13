@@ -47,7 +47,7 @@ jobs:
 
       - name: Compile Sources for CodeQL
         working-directory: android
-        run: ./gradlew compileReleaseSources || true
+        run: ./gradlew compileReleaseSources --rerun-tasks --no-build-cache --no-configuration-cache
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
