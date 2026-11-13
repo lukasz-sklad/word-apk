@@ -27,8 +27,8 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, UiState, 
 
 use crate::ime;
 use crate::mobile::{
-    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, document_pan_rect, hover_to_egui_event,
-    prefs_write_atomic, to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
+    self, AndroidThemeMode, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, document_pan_rect, effective_ime_wanted,
+    hover_to_egui_event, prefs_write_atomic, to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +80,10 @@ impl ActivityBridge {
 
     fn set_ime_wanted(&self, wanted: bool) {
         self.call_void_int(jni_str!("setImeWanted"), i32::from(wanted));
+    }
+
+    fn set_ime_suppressed(&self, suppressed: bool) {
+        self.call_void_int(jni_str!("setImeSuppressed"), i32::from(suppressed));
     }
 
     fn set_light_system_bars(&self, light: bool) {
@@ -227,6 +231,7 @@ struct AndroidShell {
     touch_filter: TouchGestureFilter,
     select_mode: bool,
     ime_wanted: bool,
+    ime_suppressed: bool,
     ime_requested_at: f64,
     prev_wants_kb: bool,
     prev_ime_bottom_dp: f32,
@@ -263,6 +268,7 @@ impl AndroidShell {
             touch_filter: TouchGestureFilter::default(),
             select_mode: false,
             ime_wanted: false,
+            ime_suppressed: false,
             ime_requested_at: -10.0,
             prev_wants_kb: false,
             prev_ime_bottom_dp: 0.0,
@@ -276,12 +282,14 @@ impl AndroidShell {
     }
 
     fn set_ime_wanted(&mut self, wanted: bool, now: f64) {
-        if self.ime_wanted != wanted || wanted {
-            self.ime_wanted = wanted;
-            if wanted {
+        let effective = effective_ime_wanted(wanted, self.ime_suppressed);
+        let closing_visible_ime = !effective && self.insets.ime_visible;
+        if self.ime_wanted != effective || effective || closing_visible_ime {
+            self.ime_wanted = effective;
+            if effective {
                 self.ime_requested_at = now;
             }
-            self.bridge.set_ime_wanted(wanted);
+            self.bridge.set_ime_wanted(effective);
         }
     }
 
@@ -473,8 +481,8 @@ impl AndroidShell {
         if toolbar_pill(ui, "Sel", self.select_mode).clicked() {
             self.select_mode = !self.select_mode;
         }
-        let kb_active = self.ime_wanted || self.insets.ime_visible;
-        if toolbar_pill(ui, "KB", kb_active).clicked() {
+        let kb_active = (self.ime_wanted || self.insets.ime_visible) && !self.ime_suppressed;
+        if toolbar_pill_enabled(ui, "KB", kb_active, !self.ime_suppressed).clicked() {
             let now = ui.ctx().input(|i| i.time);
             self.set_ime_wanted(!kb_active, now);
             if !kb_active {
@@ -499,6 +507,14 @@ impl AndroidShell {
                 if self.app.ui.ribbon_collapsed {
                     self.ribbon_pinned_during_ime = false;
                 }
+            }
+        }
+        if toolbar_pill(ui, "Kla", self.ime_suppressed).clicked() {
+            self.ime_suppressed = !self.ime_suppressed;
+            self.bridge.set_ime_suppressed(self.ime_suppressed);
+            if self.ime_suppressed {
+                let now = ui.ctx().input(|i| i.time);
+                self.set_ime_wanted(false, now);
             }
         }
     }
@@ -615,7 +631,12 @@ impl eframe::App for AndroidShell {
             self.set_ime_wanted(true, now);
         }
         self.prev_wants_kb = wants_dialog_kb;
-        self.sync_ime_surrounding_to_java();
+        if self.ime_suppressed {
+            // Stop egui-winit from re-enabling GameActivity soft input on canvas focus (#Kla lock).
+            ctx.output_mut(|o| o.ime = None);
+        } else {
+            self.sync_ime_surrounding_to_java();
+        }
     }
 
     fn on_exit(&mut self) {
@@ -628,11 +649,15 @@ impl eframe::App for AndroidShell {
 }
 
 fn toolbar_pill(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
+    toolbar_pill_enabled(ui, label, active, true)
+}
+
+fn toolbar_pill_enabled(ui: &mut Ui, label: &str, active: bool, enabled: bool) -> egui::Response {
     let t = theme::Tokens::get(ui.ctx());
     let fill = if active { t.checked } else { Color32::TRANSPARENT };
     let text_col = if active { t.text } else { t.text_dim };
     let btn = egui::Button::new(RichText::new(label).size(13.0).color(text_col)).fill(fill).min_size(egui::vec2(28.0, 28.0));
-    ui.add(btn)
+    ui.add_enabled(enabled, btn)
 }
 
 fn build_services(bridge: &ActivityBridge, saf: &Arc<Mutex<SafState>>) -> Services {

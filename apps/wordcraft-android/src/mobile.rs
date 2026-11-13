@@ -271,6 +271,12 @@ pub fn document_pan_rect(viewport: Option<Rect>, canvas_rect: Option<Rect>) -> O
     viewport.or_else(|| canvas_rect.map(|r| Rect::from_min_max(r.min, egui::pos2((r.max.x - 18.0).max(r.min.x), (r.max.y - 18.0).max(r.min.y)))))
 }
 
+/// Resolves whether the Android on-screen keyboard should stay active given a request `wanted`
+/// and the toolbar keyboard-suppression lock (`Kla`).
+pub const fn effective_ime_wanted(wanted: bool, ime_suppressed: bool) -> bool {
+    wanted && !ime_suppressed
+}
+
 /// Minimum average finger distance from the centroid before scaling begins (prevents spikes).
 const MIN_PINCH_RADIUS_DP: f32 = 10.0;
 /// Bounds per-event pinch scale deltas against single-frame touch jitter.
@@ -860,5 +866,10 @@ mod tests {
         assert!(hover_to_egui_event(100.0, 200.0, 0.0).is_none());
         assert!(hover_to_egui_event(f32::INFINITY, 200.0, 2.0).is_none());
         assert_eq!(hover_to_egui_event(300.0, 450.0, 2.5), Some(Event::PointerMoved(pos2(120.0, 180.0))));
+
+        assert!(effective_ime_wanted(true, false));
+        assert!(!effective_ime_wanted(true, true));
+        assert!(!effective_ime_wanted(false, false));
+        assert!(!effective_ime_wanted(false, true));
     }
 }

@@ -41,6 +41,8 @@ class WordCraftActivity : GameActivity() {
 
     private lateinit var imeProxy: ImeProxyView
     private var imeWanted = false
+    @Volatile
+    private var imeSuppressed = false
     private var lastImeVisible = false
 
     @Volatile
@@ -196,26 +198,64 @@ class WordCraftActivity : GameActivity() {
         getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
 
     private fun showImeNow() {
+        if (imeSuppressed) {
+            return
+        }
         val mgr = imm() ?: return
-        if (!imeProxy.hasFocus()) {
+        val needsFocus = !imeProxy.hasFocus()
+        if (needsFocus) {
             imeProxy.requestFocus()
         }
-        if (!mgr.isActive(imeProxy)) {
-            mgr.restartInput(imeProxy)
+        val show = {
+            if (imeWanted && !imeSuppressed) {
+                if (!mgr.isActive(imeProxy)) {
+                    mgr.restartInput(imeProxy)
+                }
+                mgr.showSoftInput(imeProxy, 0)
+                WindowCompat.getInsetsController(window, window.decorView).show(WindowInsetsCompat.Type.ime())
+            }
         }
-        mgr.showSoftInput(imeProxy, 0)
+        if (needsFocus) {
+            imeProxy.post { show() }
+        } else {
+            show()
+        }
+    }
+
+    private fun hideImeNow() {
+        activeConnection?.clearComposingState()
+        if (imeProxy.hasFocus()) {
+            imeProxy.clearFocus()
+        }
+        imm()?.hideSoftInputFromWindow(imeProxy.windowToken ?: window.decorView.windowToken, 0)
+        WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
     }
 
     @Suppress("unused")
     fun setImeWanted(wanted: Int) {
         runOnUiThread {
-            val want = wanted != 0
+            val want = (wanted != 0) && !imeSuppressed
             imeWanted = want
             if (want) {
                 showImeNow()
             } else {
-                activeConnection?.clearComposingState()
-                imm()?.hideSoftInputFromWindow(imeProxy.windowToken, 0)
+                hideImeNow()
+            }
+        }
+    }
+
+    @Suppress("unused")
+    fun setImeSuppressed(suppressed: Int) {
+        runOnUiThread {
+            val sup = suppressed != 0
+            imeSuppressed = sup
+            window.setSoftInputMode(
+                (if (sup) WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN else WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED) or
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            )
+            if (sup) {
+                imeWanted = false
+                hideImeNow()
             }
         }
     }
@@ -462,7 +502,7 @@ class WordCraftActivity : GameActivity() {
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
-        override fun onCheckIsTextEditor(): Boolean = true
+        override fun onCheckIsTextEditor(): Boolean = !owner.imeSuppressed
 
         override fun onTouchEvent(event: MotionEvent?): Boolean = false
 
