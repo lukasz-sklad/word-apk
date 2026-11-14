@@ -54,7 +54,7 @@ W procesie budowania współpracują dwa wyspecjalizowane obrazy kontenerowe:
 
 | Obraz Podman | Zainstalowane narzędzia | Rola w potoku | Domyślne zmienne / pułapki |
 |---|---|---|---|
-| `localhost/limusic-builder:latest` | `rustc 1.99.0`, `rustfmt 1.10.0-stable`, `clippy 0.1.99`, biblioteki systemowe Linux | `cargo fmt`, `cargo test`, `cargo clippy`, `cargo xtask layers`, `cargo xtask assets` | Brak `CARGO_HOME` w env (używa `/root/.cargo`) |
+| `localhost/craft-builder:latest` | `rustc 1.99.0`, `rustfmt 1.10.0-stable`, `clippy 0.1.99`, biblioteki systemowe Linux | `cargo fmt`, `cargo test`, `cargo clippy`, `cargo xtask layers`, `cargo xtask assets` | Brak `CARGO_HOME` w env (używa `/root/.cargo`) |
 | `localhost/wordcraft-builder-image:latest` | `rustc 1.99.0`, target `wasm32-unknown-unknown`, `CARGO_HOME=/usr/local/cargo` | `cargo xtask wasm`, `cargo ndk` (arm64 + x86_64), `./gradlew` (Android APK/AAB) | Domyślnie `CARGO_TARGET_DIR=/tmp/target` — **zawsze** nadpisuj przez `-e CARGO_TARGET_DIR=/target`; wywołuj przez **`bash -c` (nigdy `bash -lc`)**; brak `rustfmt`/`clippy` |
 
 ### Kluczowe mapowania wolumenów i środowiska (NVMe + SDK + JBR)
@@ -62,7 +62,7 @@ W procesie budowania współpracują dwa wyspecjalizowane obrazy kontenerowe:
 * Repo projektu: `/home/deck/GIT/android/craft/word-apk:/work` (`-w /work`)
 * Cache kompilacji Rust: `/home/deck/.cache/wordcraft-android-target:/target` (`-e CARGO_TARGET_DIR=/target`)
 * Cache rejestrów Cargo: `/home/deck/.cache/cargo/registry` i `/home/deck/.cache/cargo/git`
-  * w `limusic-builder`: montowane pod `/root/.cargo/registry` i `/root/.cargo/git`
+  * w `craft-builder`: montowane pod `/root/.cargo/registry` i `/root/.cargo/git`
   * w `wordcraft-builder-image`: montowane pod `/usr/local/cargo/registry` i `/usr/local/cargo/git`
 * Słowniki `craft-i18n`: `/home/deck/.cache/craft-i18n:/craft-i18n:ro` (`-e CRAFT_I18N_DIR=/craft-i18n`)
 * Toolchain Android Rust (`aarch64-linux-android`, `x86_64-linux-android`): `/home/deck/.cache/wordcraft-rustup:/rustup:ro` (`RUSTUP_HOME=/rustup` **tylko** dla `cargo ndk`)
@@ -71,7 +71,7 @@ W procesie budowania współpracują dwa wyspecjalizowane obrazy kontenerowe:
   * `/home/deck/Android/Sdk:/android-sdk` (`ANDROID_HOME=/android-sdk`, `ANDROID_SDK_ROOT=/android-sdk`)
   * `/home/deck/Android/Sdk/ndk/27.2.12479018:/ndk` (`ANDROID_NDK_HOME=/ndk`)
 * Java SDK dla Gradle (JBR `25.0.4` z Flatpaka Android Studio): `/var/lib/flatpak/app/com.google.AndroidStudio/current/active/files/extra/jbr:/jbr:ro` (`JAVA_HOME=/jbr`)
-* Cache Gradle: `/home/deck/.gradle:/root/.gradle`
+* Cache Gradle i klucz debugowy Androida: `/home/deck/.gradle:/root/.gradle` oraz `/home/deck/.android:/root/.android` (dzięki stałemu `debug.keystore` aktualizacja przez `adb -d install -r` nie zmienia podpisu)
 
 > [!IMPORTANT]
 > **Krytyczne pułapki w Podmanie na SteamOS:**
@@ -85,7 +85,7 @@ W procesie budowania współpracują dwa wyspecjalizowane obrazy kontenerowe:
 
 ```mermaid
 flowchart TD
-    S0["Krok 0: Przygotowanie katalogu cache target na NVMe"] --> S1["Krok 1 (limusic-builder): fmt + testy + clippy + layers + assets"]
+    S0["Krok 0: Przygotowanie katalogu cache target na NVMe"] --> S1["Krok 1 (craft-builder): fmt + testy + clippy + layers + assets"]
     S1 --> S2["Krok 2 (wordcraft-builder-image): cargo xtask wasm"]
     S2 --> S3["Krok 3 (wordcraft-builder-image): cargo ndk arm64-v8a + x86_64 (-z max-page-size=16384)"]
     S3 --> S4["Krok 4 (wordcraft-builder-image): ./gradlew assembleDebug assembleRelease --no-daemon"]
@@ -103,7 +103,7 @@ flowchart TD
 mkdir -p /home/deck/.cache/wordcraft-android-target
 ```
 
-### Krok 1 — Testy Rust, Clippy, formatowanie i bramki `xtask` (`limusic-builder`)
+### Krok 1 — Testy Rust, Clippy, formatowanie i bramki `xtask` (`craft-builder`)
 
 ```bash
 podman run --rm \
@@ -115,7 +115,7 @@ podman run --rm \
   -w /work \
   -e CARGO_TARGET_DIR=/target \
   -e CRAFT_I18N_DIR=/craft-i18n \
-  localhost/limusic-builder:latest \
+  localhost/craft-builder:latest \
   bash -c '
     set -euo pipefail
     cargo fmt --all -- --check
@@ -179,6 +179,7 @@ podman run --rm \
   -v /home/deck/GIT/android/craft/word-apk:/work \
   -v /home/deck/Android/Sdk:/android-sdk \
   -v /home/deck/.gradle:/root/.gradle \
+  -v /home/deck/.android:/root/.android \
   -v /var/lib/flatpak/app/com.google.AndroidStudio/current/active/files/extra/jbr:/jbr:ro \
   -w /work/android \
   -e JAVA_HOME=/jbr \
@@ -232,12 +233,37 @@ git push origin main
 
 ---
 
-## 7. Szybka checklista gotowości (Definition of Done)
+## 7. Tryb lekki — budowa i testy na GitHub Actions (bez lokalnego APK)
+
+Nie za każdym razem trzeba kompilować cały projekt NDK i Gradle lokalnie na Steam Decku. Masz skonfigurowaną pełną automatyzację CI/CD w repozytorium `lukasz-sklad/word-apk`:
+
+* **Kiedy wybierać tryb lekki (GitHub Actions):**
+  * przy pobieraniu i scalaniu aktualizacji z `upstream/main` bez dużych zmian własnego UI Androida,
+  * przy drobnych poprawkach kodu/dokumentacji lub gdy chcesz dostać gotową paczkę **Release APK / AAB podpisaną stałym kluczem produkcyjnym** z sekretów GitHuba (bez rozjazdu podpisów debugowych).
+* **Minimalna kontrola lokalna przed `git push origin main` (`localhost/craft-builder:latest`):**
+  ```bash
+  podman run --rm \
+    -v /home/deck/GIT/android/craft/word-apk:/work \
+    -v /home/deck/.cache/wordcraft-android-target:/target \
+    -v /home/deck/.cache/cargo/registry:/root/.cargo/registry \
+    -v /home/deck/.cache/cargo/git:/root/.cargo/git \
+    -w /work \
+    -e CARGO_TARGET_DIR=/target \
+    localhost/craft-builder:latest \
+    bash -c 'set -euo pipefail && cargo fmt --all -- --check && cargo xtask layers && cargo xtask assets'
+  ```
+  *(Przy większym scaleniu lub zmianach w Rust warto dodatkowo uruchomić `cargo clippy --workspace --all-targets -- -D warnings` przed wypchnięciem, żeby nie czekać kilkanaście minut na błąd składni w Actions.)*
+* **Co automatycznie wykona GitHub Actions po `git push origin main`:**
+  * `ci.yml` — uruchomi pełne `cargo xtask ci` (wszystkie testy jednostkowe/integracyjne, `clippy`, `fmt`, `layers`, `assets`, `wasm`),
+  * `android.yml` — zbuduje natywne biblioteki `.so` (`arm64-v8a` i `x86_64`), spakuje i podpisze Release **APK oraz AAB** oraz przeprowadzi audyt bezpieczeństwa **CodeQL (`java-kotlin`)**,
+  * `printing.yml`, `packaging-lint.yml`, `sonarcloud.yml` — zweryfikują drukowanie, paczkowanie i analizę statyczną.
+
+---
+
+## 8. Szybka checklista gotowości (Definition of Done)
 
 * [ ] Brak `unwrap()` / `expect()` / `panic!` / `unsafe` w kodzie produkcyjnym Rust.
 * [ ] Każdy nowy asset wpisany w `ATTRIBUTION.md` (`cargo xtask assets` przechodzi).
-* [ ] `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask wasm` i testy (`wordcraft-android`, `speech::`, `i18n::`) przechodzą z `CRAFT_I18N_DIR=/craft-i18n`.
-* [ ] Biblioteki `.so` (`arm64-v8a` i `x86_64`) zbudowane z `-z max-page-size=16384`.
-* [ ] `./gradlew assembleDebug assembleRelease --no-daemon` kończy się sukcesem.
-* [ ] APK zweryfikowane na urządzeniu przez `adb`.
+* [ ] W trybie pełnym: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask wasm` i testy (`wordcraft-android`, `speech::`, `i18n::`) przechodzą z `CRAFT_I18N_DIR=/craft-i18n` (w trybie lekkim minimalnie `fmt` + `layers` + `assets`, a pełne testy i APK wykonuje GitHub Actions).
+* [ ] Przy lokalnej budowie APK: biblioteki `.so` (`arm64-v8a` i `x86_64`) zbudowane z `-z max-page-size=16384`, `./gradlew assembleDebug assembleRelease --no-daemon` przechodzi z zamontowanym `/home/deck/.android:/root/.android` i zweryfikowane przez `adb`.
 * [ ] Zmiany wypchnięte do `origin/main` (`lukasz-sklad/word-apk`), **bez** wypychania do `upstream` (`storytold/wordcraft`).
