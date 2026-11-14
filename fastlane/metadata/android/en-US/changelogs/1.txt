@@ -2,4 +2,5 @@
 - Unified EN/PL top toolbar and accurate display cutout / window insets
 - Fixed Gboard Polish IME composition, suggestions and mid-word correction
 - Fixed touch drag selection mode (Sel / Zazn)
+- Movable Read Aloud player, hide/show eye toggle, and 4-state theme icon
 - Removed INTERNET permission, updater, and Discord links; added fork notice in About

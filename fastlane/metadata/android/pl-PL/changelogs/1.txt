@@ -2,4 +2,5 @@
 - Spójna górna belka EN/PL oraz wykrywanie wycięcia i okien trybu komputerowego
 - Naprawiona obsługa Gboard: polskie podpowiedzi, autokorekta i zamiana słów w środku tekstu
 - Poprawiony tryb zaznaczania jednym palcem (Zazn)
+- Przesuwalne okienko „Czytaj na głos”, przycisk oka i 4-stanowa ikona motywu
 - Usunięte uprawnienie INTERNET, auto-updater i linki Discorda; dodana nota o forku w O programie
