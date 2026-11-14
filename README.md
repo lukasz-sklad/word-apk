@@ -1,447 +1,109 @@
 <p align="center">
-  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.wordcraft.png" width="128" height="128" alt="WordCraft Android icon: a document page and pen on a blue tile">
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.wordcraft.png" width="104" height="104" alt="WordCraft (APK) icon">
 </p>
 
-<h1 align="center">WordCraft Android (nieoficjalny fork / unofficial fork)</h1>
+<h1 align="center">WordCraft (APK)</h1>
 
 <p align="center">
-  <b>Nieoficjalny fork Androidowy edytora tekstu WordCraft (<a href="https://github.com/storytold/wordcraft">storytold/wordcraft</a>), napisany w czystym Ruście i Kotlinie.</b><br>
-  <b>Unofficial Android fork based on WordCraft, an open-source word processor written in pure Rust.</b>
+  <b>Nieoficjalny, w 100% offline edytor dokumentów dla Androida oparty na <a href="https://github.com/storytold/wordcraft">WordCraft</a></b><br>
+  <sub>Unofficial 100% offline Android fork based on WordCraft (written in Rust &amp; Kotlin) · pod ikoną w systemie: <b>Word</b></sub>
 </p>
 
 <p align="center">
-  <img alt="Written in Rust and Kotlin" src="https://img.shields.io/badge/written%20in-Rust%20%2B%20Kotlin-2b47b5?style=flat-square&logo=rust&logoColor=white">
-  <img alt="Platform: Android" src="https://img.shields.io/badge/platform-Android%208.0%2B%20(arm64%20%C2%B7%20x86__64)-3b5bdb?style=flat-square&logo=android&logoColor=white">
-  <img alt="Offline: No INTERNET permission" src="https://img.shields.io/badge/network-100%25%20offline%20(no%20INTERNET)-2e7d32?style=flat-square">
+  <img alt="Platform: Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B%20(arm64%20%C2%B7%20x86__64)-3b5bdb?style=flat-square&logo=android&logoColor=white">
+  <img alt="Network: 100% offline (no INTERNET permission)" src="https://img.shields.io/badge/network-100%25%20offline%20(no%20INTERNET)-2e7d32?style=flat-square">
+  <img alt="Written in Rust and Kotlin" src="https://img.shields.io/badge/Rust%20%2B%20Kotlin-1.95%2B-2b47b5?style=flat-square&logo=rust&logoColor=white">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-2b47b5?style=flat-square">
 </p>
 
+<p align="center">
+  <a href="#funkcje">Funkcje</a> ·
+  <a href="#zrzuty-ekranu">Zrzuty ekranu</a> ·
+  <a href="#pobieranie-i-f-droid">Pobieranie i F-Droid</a> ·
+  <a href="#budowanie-apk">Budowanie APK</a> ·
+  <a href="LICENSE-MIT">MIT</a> ·
+  <a href="LICENSE-APACHE">Apache-2.0</a> ·
+  <a href="NOTICE">NOTICE</a> ·
+  <a href="ATTRIBUTION.md">Attribution</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
+
 > [!NOTE]
-> **Informacja o forku / Fork notice:** To repozytorium (`lukasz-sklad/word-apk`) jest **nieoficjalnym, społecznościowym forkiem** projektu [WordCraft](https://github.com/storytold/wordcraft) przygotowanym pod system **Android** (z dostosowanym interfejsem dotykowym **EN / PL**, obsługą klawiatury Gboard / IME, wcięć ekranu oraz wbudowanym offline’owym słownikiem polskim i angielskim). Projekt nie jest oficjalnym produktem zespołu ArtCraft — niewolne znaki towarowe `docs/brand/` zostały usunięte zgodnie z warunkami licencyjnymi projektu źródłowego.
+> To repozytorium (`lukasz-sklad/word-apk`) jest **nieoficjalnym, społecznościowym forkiem Androidowym** projektu [storytold/wordcraft](https://github.com/storytold/wordcraft).
+> Działa w **100% offline** — w [`AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) brak uprawnienia `INTERNET`, nie ma tu Google Play Services, telemetrii, reklam ani wbudowanego mechanizmu aktualizacji sieciowych (`craft-update` wyłączony). Niewolne znaki towarowe (`docs/brand/`) zostały usunięte.
+> **Błędy aplikacji mobilnej zgłaszaj w tym repozytorium ([Issues](https://github.com/lukasz-sklad/word-apk/issues)), nie u autorów wersji desktopowej.**
 
-> [!IMPORTANT]
-> **Prywatność i gotowość pod F-Droid:** Wersja Androidowa działa **w 100% offline** — w pliku [`AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) usunięto uprawnienie `INTERNET`, brak w niej Google Play Services, telemetrii, reklam oraz mechanizmów samoczynnego pobierania aktualizacji w aplikacji (`craft-update` wyłączony dla `target_os = "android"`). Aktualizacje są dostarczane przez wydania APK / repozytorium F-Droid.
+## Funkcje
 
-## Funkcje i budowanie wersji Android
+* **Formaty plików:** otwiera i zapisuje `.docx` (OOXML), `.odt`, `.rtf`, `.html`, `.md`, `.txt`; otwiera starsze pliki `.doc` (97–2003); eksportuje PDF z zaznaczalnym tekstem.
+* **Języki i pisownia offline:** spójna górna belka dotykowa **PL / EN**, wbudowany polski słownik Hunspell (`pl_PL`, SJP.PL) i reguły dzielenia wyrazów TeX oraz słownik angielski.
+* **Klawiatura i dotyk:** poprawiona obsługa klawiatury Gboard / IME (podpowiedzi, autokorekta, dyktowanie głosowe, poprawki w środku zdania), tryb zaznaczania jednym palcem (`Zazn` / `Sel`) i powiększanie dwoma palcami.
+* **Ekran i tryb okienkowy:** wykrywanie wycięcia aparatu (cutout), pasków systemowych i okien trybu komputerowego (Android desktop / freeform), motywy `System` / `Light` / `Sepia` / `Dark`.
+* **Bezpieczeństwo danych:** kod bez `unsafe` i paników w silniku dokumentów, brak `wordcraft-mcp` i kanałów sieciowych w binarce Androida.
 
-* **Formaty plików:** otwiera i zapisuje `.docx` (OOXML), `.odt`, `.rtf`, `.html`, `.md`, `.txt`, a także otwiera starsze `.doc` (97–2003) oraz eksportuje PDF.
-* **Języki i pisownia offline:** spójny górny pasek w języku polskim (**PL**) i angielskim (**EN**), wbudowany polski słownik Hunspell (`pl_PL`) i reguły dzielenia wyrazów TeX.
-* **Dostosowanie pod Androida:** obsługa Gboard / IME z autokorektą, tryb zaznaczania tekstu jednym palcem (`Zazn`), powiększanie dwoma palcami, wykrywanie rzeczywistego zasłonięcia przez wycięcie aparatu / tryb okienkowy.
-* **Budowanie ze źródeł (NDK r27c, Rust >= 1.95, JDK 17):**
-  ```sh
-  cargo test -p wordcraft-android
-  RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384" \
-    cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --release -p wordcraft-android
-  cd android && ./gradlew testDebugUnitTest assembleRelease --no-daemon
-  ```
-
----
-
-<p align="center">
-  <img src="docs/images/hero.png" alt="WordCraft with the Home tab of the ribbon open over a two-page document titled The Open Studio Handbook." width="100%">
-  <br><sub><b>WordCraft</b> — interfejs dokumentu i wstążki (desktop / silnik współdzielony z wersją Android).</sub>
-</p>
-
-<p align="center">
-  <a href="#a-tour">A tour</a> ·
-  <a href="#why-wordcraft">Why WordCraft</a> ·
-  <a href="#what-works-today">What works today</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#for-agents-cli-and-mcp">For agents</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#roadmap">Roadmap</a> ·
-  <a href="#downloads">Downloads</a> ·
-  <a href="#the-crafting-apps">The Crafting Apps</a> ·
-  <a href="#license-and-credits">License and credits</a>
-</p>
-
-## A tour
-
-Every screenshot below is WordCraft itself, rendered offscreen by its own UI test harness
-(`cargo run -p wordcraft-ui-egui --example ui_shot`).
+## Zrzuty ekranu
 
 <table>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/review.png" alt="The Review tab with Track Changes on: the word forty is inserted in magenta and thirty struck through; three commented phrases are shaded and joined by dashed leader lines to comment balloons in a grey markup area to the right of the page" width="100%"><p align="center"><sub><b>Review.</b> Track changes, comment balloons in the margin, accept and reject, spelling and grammar as you type.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/references.png" alt="The References tab with two pages side by side: a table of contents with dotted leaders and page numbers on page one, and a styled table, numbered list and hyperlink on page two" width="100%"><p align="center"><sub><b>References.</b> Tables of contents, footnotes, citations in APA, MLA, Chicago or IEEE, index and captions.</sub></p></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/design.png" alt="The Design tab showing style-set previews; the document is set in a serif theme with plum headings underlined by thin rules and a pale diagonal DRAFT watermark behind the text" width="100%"><p align="center"><sub><b>Design.</b> Themes, style sets, paragraph spacing, watermarks, page colour and borders.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/dark.png" alt="WordCraft in dark mode with the Insert tab open and formatting marks shown: pilcrows at paragraph ends and dots for spaces" width="100%"><p align="center"><sub><b>Dark mode</b> with formatting marks, and the Insert tab: tables, pictures, shapes, links, headers, footers, fields and symbols.</sub></p></td>
-</tr>
-<tr>
-<td colspan="2"><img src="docs/images/layout.png" alt="The Layout tab at 80% zoom: the first paragraph opens with a three-line drop cap E, a dark blue circle sits beside the second section with its paragraph wrapping around it and hyphenating art-ist at the line end, every line is numbered in the left margin and a thin blue border surrounds the page" width="100%"><p align="center"><sub><b>Layout.</b> Drop caps, text wrapping around pictures and shapes, automatic hyphenation, line numbers and page borders.</sub></p></td>
-</tr>
-<tr>
-<td colspan="2"><img src="docs/images/backstage.png" alt="The File tab start page with a Good morning greeting, thumbnails of the Blank document, Studio handbook, Letter, Résumé and Report templates, and a list of recent documents" width="100%"><p align="center"><sub><b>File.</b> Start from a template, open recent documents, edit properties, export to PDF and other formats.</sub></p></td>
-</tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="260" alt="Pisanie po polsku z klawiaturą Gboard i autokorektą">
+      <br><sub>Pisanie po polsku z obsługą podpowiedzi Gboard</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="260" alt="Tryb zaznaczania Zazn i formatowanie tekstu na pasku">
+      <br><sub>Zaznaczanie jednym palcem (<code>Zazn</code>) i pasek narzędzi</sub>
+    </td>
+  </tr>
 </table>
 
-## Why WordCraft
+## Pobieranie i F-Droid
 
-- **Familiar.** Ribbon tabs, groups, shortcuts and behaviour: Enter continues a list,
-  Tab demotes it, Ctrl/⌘+B bolds the word under the caret, the Styles gallery previews styles live,
-  F4 repeats, F7 checks spelling, F8 extends the selection.
-- **Your files.** Opens and saves .docx (OOXML), and also .odt, .rtf, .html, .md, .tex (LaTeX), .txt; opens legacy 97-2003 .doc; exports PDF
-  with real, selectable text, links and bookmarks.
-- **Fast.** Paragraph layout is cached, so typing in a 188-page document re-lays it out in about
-  1.4 ms; pages render on demand.
-- **Everywhere.** One Rust codebase for macOS, Windows, Linux, BSD and the web. No Electron, no
-  Tauri: native [egui](https://github.com/emilk/egui) on the GPU.
-- **Built for agents.** Every action is a command with an id. The same 422 commands drive the
-  ribbon, keyboard shortcuts, the command search, a command-line tool, a JSON control channel and
-  an MCP server.
-- **Private.** Spelling, grammar and everything else work offline.
-- **Open.** MIT OR Apache-2.0. Clean-room: built from public specifications and observation, with
-  every asset original or openly licensed.
+* **Wydania APK:** zakładka [Releases](https://github.com/lukasz-sklad/word-apk/releases) (w tym weryfikacja sum `SHA256SUMS.txt` dla wydań z tagów `v*`).
+* **F-Droid (własne repozytorium GitHub Pages i przepis `fdroiddata`):**
+  * Schemat numeracji **`<upstream>.<apk>`** — np. **`0.18.1.1`** (rdzeń WordCraft `0.18.1` + nasze wydanie `.1`), kolejna poprawka Androida to `0.18.1.2`, a po aktualizacji bazy do `0.19.0` → `0.19.0.1` przy stale rosnącym `versionCode`.
+  * Konfiguracja repozytorium, sekretów podpisu i opis zgłoszenia do `fdroid/fdroiddata`: [`packaging/fdroid/README.md`](packaging/fdroid/README.md) · [`one.lmk.wordcraft.yml`](packaging/fdroid/one.lmk.wordcraft.yml).
 
-## What works today
+## Budowanie APK
 
-| Area | Highlights |
-|---|---|
-| **Writing** | Fast typing with IME, smart quotes, AutoCorrect, list autoformat (`* `, `1. `), dashes; word, sentence, paragraph selection; drag-select; clipboard with formatting; undo/redo; find and replace with regex |
-| **Formatting** | Fonts, sizes, bold/italic/underline styles, strike, sub/superscript, caps, highlight, colours, character spacing, Format Painter, Change Case, Clear Formatting |
-| **Paragraphs** | Alignment, indents (draggable on the ruler), spacing, line spacing, tabs with leaders, borders, shading, keep with next, widow/orphan control |
-| **Styles** | Built-in style set, live gallery, Styles pane, create/modify/update styles, style sets, themes |
-| **Lists** | Bullets, numbering, multilevel, restart, set value, custom formats |
-| **Tables** | Insert by grid, merge/split, styles with banded rows, borders, shading, header rows repeated across pages, rows that split across pages, sort, formulas, text ↔ table |
-| **Pages** | Margins, orientation, size, columns, page/column/section breaks, headers and footers (first page, odd/even), page numbers, watermark, page borders, line numbers, vertical alignment, drop caps, automatic hyphenation |
-| **Objects** | Pictures (resize, crop, recolour, brightness/contrast, transparency, background removal, picture styles, rotate), shapes, text boxes, floating position with text wrapping (square, top and bottom, behind or in front of text) |
-| **References** | Table of contents, footnotes and endnotes, citations and bibliography (APA, MLA, Chicago, IEEE), captions, table of figures, cross-references, index, table of authorities |
-| **Review** | Spelling and grammar with suggestions (English and Polish, by each run's language), thesaurus, word count, comments in margin balloons or a pane, track changes, accept/reject, compare documents, restrict editing, accessibility checker, document inspector |
-| **Mailings** | Mail merge from CSV, merge fields, address block, greeting line, rules, preview, finish to a document; envelopes and labels |
-| **View** | Print layout, web layout, draft, read mode, focus, zoom, one/multiple pages, page width, Navigation pane, rulers, gridlines, dark mode; interface in English, 简体中文, 繁體中文, 日本語, Português (Brasil), Español, Українська, Српски / Srpski, Eesti, Türkçe, Русский, Italiano, Deutsch, Polski, Čeština, Magyar, Français, Български, Tiếng Việt, 한국어, Svenska, Hrvatski, Nederlands, Dansk, Română, العربية (mirrored) or Slovenščina (follows the system language by default) |
-| **Files** | .docx read/write, legacy 97-2003 .doc import, PDF export, .odt, .rtf, .html, .md, .tex, .txt import/export, page images |
+<details>
+<summary>Pokaż instrukcję kompilacji lokalnej ze źródeł (Rust &gt;= 1.95, Android NDK r27c, JDK 17)</summary>
 
-The honest picture, area by area, is in [ROADMAP.md](ROADMAP.md), the
-[parity assessment](docs/target-app-parity.md) and the generated
-[feature checklist](docs/parity-checklist.md).
-
-## Quick start
+Wymagane: toolchain Rust z celami `aarch64-linux-android` i `x86_64-linux-android`, `cargo-ndk`, Android NDK `r27c` oraz JDK 17. Opcjonalnie katalog [`storytold/craft-i18n`](https://github.com/storytold/craft-i18n) na rewizji z [`craft-i18n.rev`](craft-i18n.rev) wskazany zmienną `CRAFT_I18N_DIR`.
 
 ```sh
-git clone https://github.com/storytold/wordcraft
-cd wordcraft
-cargo run --release -p wordcraft -- --sample        # the desktop app with the sample document
-cargo run --release -p wordcraft -- report.docx     # open a document
+# 1. Testy Rusta
+cargo test -p wordcraft-android
+
+# 2. Kompilacja bibliotek natywnych (.so) z wyrównaniem stron 16 KB
+RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384" \
+  cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --release -p wordcraft-android
+
+# 3. Testy jednostkowe Kotlina, Lint i budowa APK
+cd android
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease --no-daemon
 ```
 
-The interface translations and the spelling and hyphenation data come from
-[craft-i18n](https://github.com/storytold/craft-i18n), an optional build input. To build with them,
-check it out at the commit in `craft-i18n.rev` and point `CRAFT_I18N_DIR` at it (an absolute
-path); without it WordCraft builds with an English interface, English spelling falls back to an
-installed Hunspell English or craft-proof's built-in word list, and only Bulgarian, Turkish and
-Russian hyphenate (by rule):
+Wyniki trafiają do `android/app/build/outputs/apk/{debug,release}/`.
 
-```sh
-git clone https://github.com/storytold/craft-i18n ../craft-i18n
-git -C ../craft-i18n checkout "$(cat craft-i18n.rev)"
-CRAFT_I18N_DIR="$PWD/../craft-i18n" cargo run --release -p wordcraft -- --sample
-```
+</details>
 
-Command line:
+## Licencje i pochodzenie
 
-```sh
-wordcraft-cli convert report.docx report.pdf        # docx, pdf, odt, rtf, html, md, tex, txt, png
-wordcraft-cli convert report.docx report.pdf --strict   # exit 3, no file, if a character or picture would be left out
-wordcraft-cli text report.docx                      # plain text
-wordcraft-cli inspect report.docx                   # structure as JSON
-wordcraft-cli run --template sample \
-  --cmd 'select.text={"text":"Membership"}' --cmd format.bold --save out.docx
-wordcraft-cli run --script job.json                 # the same from a file: commands, then save to docx and pdf
-```
+<details>
+<summary>Zestawienie licencji: kod MIT OR Apache-2.0, czcionki OFL-1.1, słownik polski SJP.PL (Apache-2.0 / MIT)</summary>
 
-`convert --strict` (a `.pdf` or `.png` output only) and `render --strict` (a PNG of one page) refuse a silently incomplete render: they exit 3
-and write nothing if the output would draw a character no font has (an empty box) or leave out a
-picture. Exit codes are 0 (written), 1 (unreadable input, usage error, or `--strict` with another
-output type, checked before the input is read) and 3 (strict refusal). On exit 3, stderr has one
-`wordcraft-cli: strict: …` line per kind, then one JSON line:
-
-```sh
-wordcraft-cli convert in.docx out.pdf --strict
-# wordcraft-cli: strict: 1 character cannot be drawn: U+2D30 (×3)
-# wordcraft-cli: strict: 1 picture(s) left out: word/media/image2.bin (header2.xml): unsupported format
-# {"schema":1,"strict":"failed","missing_glyphs":[{"cp":"U+2D30","count":3}],"missing_pictures":[{"part":"word/media/image2.bin","source_part":"word/header2.xml","reason":"unsupported_format"}],"truncated":false,"total_missing_glyphs":1,"total_missing_pictures":1,"glyphs_truncated":false,"pictures_truncated":false}
-```
-
-The JSON line (schema 1, also what `file.strictReport` returns) has `schema`, `strict`
-(`"passed"` or `"failed"`), `missing_glyphs` (entries `{"cp", "count"}`, sorted by code point),
-`missing_pictures` (entries `{"part", "source_part", "reason"}`: the picture's part or target, the
-story part it sits in such as `word/header2.xml`, and a reason code; `source_part` is also
-`background` (the page picture), `body`, `header`, `footer`, `footnote`, `endnote`, `comment` or
-`text box` where the part name is not known (a document not opened from a DOCX), or a chunk path such as
-`word/afchunk1.docx > word/header1.xml` for a picture inside an embedded DOCX chunk), `truncated`, the two totals
-`total_missing_glyphs` and `total_missing_pictures`, and `glyphs_truncated` and
-`pictures_truncated` for each list. The reason codes are `missing_part`, `external_target`,
-`link_only`, `undecodable` and `unsupported_format`; the stderr lines use plain words for them. When a list is cut, the stderr line gives the total
-(`300 characters cannot be drawn (first 256 listed)`).
-Each list stops at 256 entries separately; `truncated` is true when either was cut, and the totals
-count every distinct character and picture found, those past the cap included. Only characters the output draws count (not hidden text, or deleted text
-without `--markup`), and a character a fallback font draws is fine. Text inside a WMF or EMF picture counts too, shaped in the font the picture names with no fallback. A Private Use Area character
-fails only if no installed font maps it. The result depends on the fonts installed on the host
-(see #5624 for a fixed font set). An external picture target is never fetched: it is reported, not
-loaded. Pictures dropped when a DOCX is opened (a missing part, an external target, or a `link only` picture with no embedded copy) are reported for DOCX input only. They have no page, so a PNG of any page is also refused for a missing or external picture anywhere in the document, unused headers included. `render --strict` checks only the page it
-writes (`--page`; `--scale` doesn't matter), prints nothing on stdout when it refuses, and reports the
-same way. The engine takes `strict: true` on `file.save`, `file.saveAs`, `file.exportPdf` and
-`file.exportPng`, and `file.strictReport {markup?, page?}` returns the report without writing.
-
-Web: `cd apps/wordcraft-web && trunk serve`, then open <http://127.0.0.1:8771/?sample>.
-
-## For agents: CLI and MCP
-
-WordCraft was designed to be driven by people *and* by AI agents.
-
-```sh
-claude mcp add wordcraft -- wordcraft-cli mcp                  # headless documents
-# confine the agent to folders: wordcraft-cli mcp --automation-read-root DIR --automation-write-root DIR
-wordcraft --control 7981 &                                     # or drive the running app…
-claude mcp add wordcraft-app -- wordcraft-cli mcp --connect 127.0.0.1:7981
-```
-
-Tools include `list_commands`, `execute`, `batch`, `type_text`, `select_text`, `inspect_document`,
-`render_page`, `save_document`, and, with a running app, `screenshot`, `click` and `key`. Agents
-can check their work through `inspect_document` without screenshots. See [docs/mcp.md](docs/mcp.md)
-and the [control protocol](docs/control-protocol.md). Macros record any sequence of commands and
-play it back (`tools.recordMacro`, `tools.macros`).
-
-## Logs
-
-The desktop app writes its log records to standard error and to `logs/wordcraft.log` next to its
-preferences: on Linux `$XDG_CONFIG_HOME/wordcraft/logs/` (by default `~/.config/wordcraft/logs/`),
-on macOS `~/Library/Application Support/WordCraft/logs/`, on Windows `%APPDATA%\WordCraft\logs\`.
-A start from a desktop menu or the Dock has no terminal, so this file is what to attach to a bug
-report: unreadable parts of a .docx, pictures or fonts a PDF export had to leave out and panics the
-command guard recovered from land there. Each launch moves the previous log to `wordcraft.1.log`
-(and that one to `wordcraft.2.log`), so the log of a run that crashed survives the next start; a
-log stops growing at 16 MiB. `--version` writes no file, and runs with `WORDCRAFT_NO_PREFS` (agents'
-test runs) log to standard error only. Document text is never logged; a panic message leaves out
-the text it quotes.
-
-By default WordCraft's own crates log at `info` and everything else at `warn`. `RUST_LOG` replaces
-that with env_logger-style directives, for example `RUST_LOG=debug`,
-`RUST_LOG=warn,wordcraft_docx=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*`
-covers every target starting with it (`wordcraft*=debug`). The logger is
-`apps/wordcraft/src/logging.rs`.
-
-## Architecture
-
-| Layer | Crate | Job |
+| Składnik | Licencja | Plik / źródło |
 |---|---|---|
-| L0 | `wordcraft-geom` | units and measurements |
-| L1 | `wordcraft-doc`, `wordcraft-fonts`, `wordcraft-proof` ([`craft-proof`](https://github.com/storytold/craft-libs/tree/main/crates/proof) from craft-libs) | document model and editing; fonts and shaping; spelling, grammar, hyphenation (data: craft-i18n `language-data/`, `CRAFT_I18N_DIR`) |
-| L2 | `wordcraft-layout`, `wordcraft-docx`, `wordcraft-formats` | line breaking, pagination, tables, notes, hit testing; OOXML; ODT/RTF/HTML/Markdown/TXT |
-| L3 | `wordcraft-render`, `wordcraft-pdf` | rasteriser (vello_cpu); PDF ([craft-pdf](docs/shared-pdf.md), Krilla) |
-| L4 | `wordcraft-engine` | session, undo, 422 commands, document feature catalog |
-| L5 | `wordcraft-mcp` | MCP server |
-| L6 | `wordcraft-ui-egui` | the word processor front end (swappable) |
-| apps | `wordcraft`, `wordcraft-cli`, `wordcraft-web` | desktop, command line, browser |
+| Kod WordCraft oraz forka Androida (`lukasz-sklad/word-apk`) | **`MIT` OR `Apache-2.0`** | [`LICENSE-MIT`](LICENSE-MIT) · [`LICENSE-APACHE`](LICENSE-APACHE) · [`NOTICE`](NOTICE) |
+| Ikony, zrzuty ekranu i aktywa | Otwarte / własne | [`ATTRIBUTION.md`](ATTRIBUTION.md) |
+| Wbudowane czcionki (`Inter`, `JetBrains Mono`, `Source Sans 3`, `Source Serif 4`) | **`OFL-1.1`** | `assets/fonts/OFL-*.txt` |
+| Polski słownik Hunspell (`pl_PL`, SJP.PL) | **`Apache-2.0`** | `android/app/src/main/assets/language-packs/pl/LICENCES/` |
+| Polskie reguły dzielenia wyrazów TeX | **`MIT`** | `android/app/src/main/assets/language-packs/pl/LICENCES/MIT.txt` |
+| Korekta angielska (Moby Hyphenator II / SCOWL) | Public Domain / MIT-like | [`NOTICE`](NOTICE) |
 
-`cargo xtask ci` runs formatting, clippy, ~800 tests, the asset-attribution check, the layering
-check and the wasm build. Contributor and agent instructions: [AGENTS.md](AGENTS.md).
+</details>
 
-## Roadmap
-
-WordCraft is in **alpha**. It has commands for 97% of the ribbon and menu features in its feature catalog
-([`docs/parity-checklist.md`](docs/parity-checklist.md)) today; counting
-depth, file fidelity, stability and the rest, we estimate it is about 60% ready for real work,
-about 55% for a typical professional's weekly work and about 63% for everyday essentials. Beta
-needs testing against real-world .docx files, keeping charts and SmartArt through a round trip,
-closer pagination fidelity, a stability sweep and native printing. Details and estimates:
-[ROADMAP.md](ROADMAP.md) and [where we fall short](docs/gaps.md).
-
-## Downloads
-
-**Download WordCraft** from GitHub: the [latest release](https://github.com/storytold/wordcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/wordcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.
-
-### Windows
-
-| Build | Installer | Portable |
-|---|---|---|
-| x64 (64-bit Intel/AMD) | `wordcraft-<ver>-windows-x64.msi` | `wordcraft-<ver>-windows-x64-portable.zip` |
-| arm64 (Snapdragon and other ARM PCs) | `wordcraft-<ver>-windows-arm64.msi` | `wordcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `wordcraft-<ver>-windows-x86.msi` | `wordcraft-<ver>-windows-x86-portable.zip` |
-
-The installer is one dual-scope package. By default it installs for your account only,
-into `%LOCALAPPDATA%\Programs\ArtCraft\WordCraft`, and needs no administrator rights; choosing
-"Everyone on this computer" on the first page installs into `C:\Program Files\ArtCraft\WordCraft` (`Program Files (x86)` for the 32-bit build)
-and asks for an administrator. Install only one copy: a copy for another scope is refused, so
-uninstall first to change who WordCraft is installed for. Installers and executables are code-signed.
-
-**If the app doesn't open on Windows:** the desktop app initializes only DirectX 12 by default.
-Letting wgpu also create an OpenGL instance can crash some graphics drivers (AMD's
-`atio6axx.dll`) before the window appears, so the app would flash in Task Manager and quit.
-`WGPU_BACKEND` overrides the default for troubleshooting (for example `dx12` or `vulkan`). In
-PowerShell, from the folder containing the executable:
-
-```powershell
-$env:WGPU_BACKEND = "vulkan"
-& .\wordcraft.exe
-Remove-Item Env:WGPU_BACKEND                     # restore the default for later launches
-```
-
-An explicit `gl` override can bring the driver crash back on affected systems. The macOS, Linux
-and web backend defaults are unchanged.
-
-The **32-bit** build uses OpenGL even when a DirectX 12 graphics card is present. On 32-bit
-Windows, creating a DirectX 12 graphics pipeline fails immediately and the app exits before the
-window appears. `WGPU_BACKEND=vulkan` (or `dx12`) still overrides that.
-
-**If the app quits right after its window appears with "Parent device is lost" in the log:**
-WordCraft compiles DirectX 12 shaders with FXC, the compiler built into Windows, so it needs no
-`dxcompiler.dll`/`dxil.dll` and ignores any copy another program put on `PATH` (#603).
-`WGPU_DX12_COMPILER` (`fxc`, `dxc`, `auto`) overrides this; with `dxc`, a matching
-`dxcompiler.dll` *and* `dxil.dll` must sit next to `wordcraft.exe`. `WGPU_BACKEND = "vulkan"`
-also avoids DirectX 12 altogether.
-
-**If the app is slow on an older Windows PC:** when DirectX 12 finds no graphics card with a
-driver for it (for example Intel 4th-generation graphics on Windows 11), it only offers the built-in
-software renderer, which draws every frame on the processor. WordCraft normally uses OpenGL instead,
-without setting anything. If OpenGL has no usable adapter, it can use DirectX 12's WARP software
-adapter. The log file records the choice (lines starting with
-`graphics:`). `WGPU_BACKEND` still overrides it, e.g. `$env:WGPU_BACKEND = "gl"` or `"dx12"`.
-
-### macOS
-
-| Build | File | Notes |
-|---|---|---|
-| App, universal (Apple silicon + Intel) | `wordcraft-<ver>-macos-universal.dmg` | Signed and notarized |
-| Command-line tool, universal | `wordcraft-cli-<ver>-macos-universal.zip` | Signed and notarized |
-
-### Linux
-
-| Format | x86_64 | aarch64 (ARM64) | Notes |
-|---|---|---|---|
-| AppImage | `wordcraft-<ver>-linux-x86_64.AppImage` | `wordcraft-<ver>-linux-aarch64.AppImage` | Runs anywhere; updates itself with [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) (`.zsync` files) |
-| Flatpak | `wordcraft-<ver>-linux-x86_64.flatpak` | `wordcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
-| Debian/Ubuntu | `wordcraft-<ver>-linux-x86_64.deb` | `wordcraft-<ver>-linux-aarch64.deb` | |
-| Fedora/RHEL/openSUSE | `wordcraft-<ver>-linux-x86_64.rpm` | `wordcraft-<ver>-linux-aarch64.rpm` | |
-| Tarball | `wordcraft-<ver>-linux-x86_64.tar.gz` | `wordcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
-
-RISC-V (riscv64): `wordcraft-<ver>-linux-riscv64.tar.gz`, a tarball cross-compiled for glibc 2.39+
-(Ubuntu 24.04, Debian 13 and newer).
-
-**Read Aloud** (Review › Read Aloud) speaks through a speech program installed on the system: it
-tries `espeak-ng`, then `espeak`, and when neither is installed it talks to Speech Dispatcher.
-The `.rpm` package recommends `espeak-ng`; the `.deb` recommends `espeak-ng` or
-`speech-dispatcher`, so the package manager installs one of the two by default. With the
-AppImage or the tarball, install one yourself if neither is there (`sudo apt install espeak-ng`,
-`sudo dnf install espeak-ng`, `sudo pacman -S espeak-ng`). The Flatpak doesn't speak yet: it has
-no audio access and doesn't include `espeak-ng`, `espeak` or Speech Dispatcher.
-
-**Wayland:** on a Wayland desktop the app runs through XWayland when it is available, because
-winit (the windowing library) supports dragging files into the window only on X11. To use the
-native Wayland backend instead (for example for sharper text with fractional scaling, at the cost
-of file drag-and-drop), choose **File › Options › Advanced › Linux display server › Wayland**; it
-applies the next time WordCraft starts, and **X11 (XWayland)** or **Automatic** switches back. The
-`WORDCRAFT_WAYLAND` environment variable overrides the setting: `1` for native Wayland, `0` for
-XWayland:
-
-```sh
-WORDCRAFT_WAYLAND=1 wordcraft
-```
-
-XWayland needs the X11 libraries, which the packages only recommend and the tarball doesn't
-install: libX11, libX11-xcb, libXcursor, libXi and libxkbcommon-x11 (on Debian and Ubuntu,
-`libx11-6`, `libx11-xcb1`, `libxcursor1`, `libxi6` and `libxkbcommon-x11-0`). Without them the app
-opens on native Wayland, whatever the setting says, and logs which ones are missing.
-
-**Arch Linux (AUR).** Community members maintain three AUR packages; the project doesn't publish
-to the AUR itself. Install one of them:
-| Package | What it installs | Choose it when |
-|---|---|---|
-| [`wordcraft-bin`](https://aur.archlinux.org/packages/wordcraft-bin) | The release tarball above, prebuilt (x86_64, aarch64) | You want the latest release without compiling (quickest) |
-| [`wordcraft`](https://aur.archlinux.org/packages/wordcraft) | The latest release, built from source with `cargo` | You prefer to build releases yourself |
-| [`wordcraft-git`](https://aur.archlinux.org/packages/wordcraft-git) | The current `main` branch, built from source | You want unreleased changes and accept an occasional broken build |
-For example `yay -S wordcraft-bin` or `paru -S wordcraft-bin`.
-
-#### Community packages
-
-These packages are maintained by community members, not by the WordCraft team.
-
-On Gentoo, the [::snakebyte overlay](https://github.com/switch87/snakebyte-overlay) packages the
-Linux release as `app-office/wordcraft-bin` (prebuilt) and `app-office/wordcraft` (built from source):
-
-```sh
-eselect repository add snakebyte git https://github.com/switch87/snakebyte-overlay.git
-emaint sync -r snakebyte
-echo 'app-office/wordcraft-bin ~amd64' >> /etc/portage/package.accept_keywords/wordcraft
-emerge --ask app-office/wordcraft-bin
-```
-
-### FreeBSD
-
-| Build | File |
-|---|---|
-| x86_64 | `wordcraft-<ver>-freebsd-x86_64.tar.gz` |
-
-### Web (WebAssembly)
-
-| Build | File | Notes |
-|---|---|---|
-| Static site | `wordcraft-web-<ver>.zip` | Runs in a modern browser; host it on any static server |
-
-## The Crafting Apps
-
-WordCraft is one of the **Crafting Apps**: free, open-source creative tools from the
-[ArtCraft](https://getartcraft.com/) team, each written from scratch in Rust and each able to
-stand on its own.
-
-| | App | What it's for | Code | Learn more |
-|:-:|---|---|---|---|
-| <img src="https://raw.githubusercontent.com/storytold/photocraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.photocraft.png" alt="" width="32" height="32"> | **PhotoCraft** | Image editing: layers, masks, type and real PSD files | [GitHub](https://github.com/storytold/photocraft) | [Website](https://getartcraft.com/apps/photocraft) |
-| <img src="https://raw.githubusercontent.com/storytold/vectorcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.vectorcraft.png" alt="" width="32" height="32"> | **VectorCraft** | Vector illustration | [GitHub](https://github.com/storytold/vectorcraft) | [Website](https://getartcraft.com/apps/vectorcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/filmcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.filmcraft.png" alt="" width="32" height="32"> | **FilmCraft** | Video editing, color and sound | [GitHub](https://github.com/storytold/filmcraft) | [Website](https://getartcraft.com/apps/filmcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/lightcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png" alt="" width="32" height="32"> | **LightCraft** | Photo library and raw development | [GitHub](https://github.com/storytold/lightcraft) | [Website](https://getartcraft.com/apps/lightcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/pdfcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png" alt="" width="32" height="32"> | **PdfCraft** | Reading, organizing and protecting PDFs | [GitHub](https://github.com/storytold/pdfcraft) | [Website](https://getartcraft.com/apps/pdfcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/effectcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png" alt="" width="32" height="32"> | **EffectCraft** | Motion graphics and visual effects | [GitHub](https://github.com/storytold/effectcraft) | [Website](https://getartcraft.com/apps/effectcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/designcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.designcraft.png" alt="" width="32" height="32"> | **DesignCraft** | Page layout and publishing | [GitHub](https://github.com/storytold/designcraft) | [Website](https://getartcraft.com/apps/designcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/figcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.figcraft.png" alt="" width="32" height="32"> | **FigCraft** | Interface design and prototyping | [GitHub](https://github.com/storytold/figcraft) | [Website](https://getartcraft.com/apps/figcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/wordcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.wordcraft.png" alt="" width="32" height="32"> | **WordCraft** | Word processing and documents | [GitHub](https://github.com/storytold/wordcraft) | [Website](https://getartcraft.com/apps/wordcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/soundcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.soundcraft.png" alt="" width="32" height="32"> | **SoundCraft** | Audio recording and editing | [GitHub](https://github.com/storytold/soundcraft) | [Website](https://getartcraft.com/apps/soundcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/deckcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.deckcraft.png" alt="" width="32" height="32"> | **DeckCraft** | Presentations and slide decks | [GitHub](https://github.com/storytold/deckcraft) | [Website](https://getartcraft.com/apps/deckcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/cadcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.cadcraft.png" alt="" width="32" height="32"> | **CADCraft** | Computer-aided design | [GitHub](https://github.com/storytold/cadcraft) | [Website](https://getartcraft.com/apps/cadcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/gridcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.gridcraft.png" alt="" width="32" height="32"> | **GridCraft** | Spreadsheets and data | [GitHub](https://github.com/storytold/gridcraft) | [Website](https://getartcraft.com/apps/gridcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/texturecraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.texturecraft.png" alt="" width="32" height="32"> | **TextureCraft** | 3D texture painting | [GitHub](https://github.com/storytold/texturecraft) | [Website](https://getartcraft.com/apps/texturecraft) |
-| <img src="https://raw.githubusercontent.com/storytold/craft-anything/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.craft-anything.png" alt="" width="32" height="32"> | **Craft Anything** | See how any software works, then build your own | [GitHub](https://github.com/storytold/craft-anything) | [Website](https://getartcraft.com/apps/craft-anything) |
-| <img src="https://raw.githubusercontent.com/tangency-labs/solidcraft/main/assets/icons/app/linux/exports/hicolor/64x64/apps/io.tangencylabs.solidcraft.png" alt="" width="32" height="32"> | **SolidCraft** | Parametric 3D CAD by Tangency Labs (community app) | [GitHub](https://github.com/tangency-labs/solidcraft) | |
-
-And [**ArtCraft**](https://getartcraft.com/) itself, our AI image and video studio for artists who want real control.
-
-<br>
-
-<p align="center">
-  <a href="https://discord.gg/artcraft"><img alt="Join the ArtCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
-</p>
-
-<h3 align="center">Come make things with us</h3>
-
-<p align="center">
-  Our Discord is where artists of every kind hang out: people who paint, shoot, draw, cut film,
-  set type, and people still figuring out what they like to make. Share what you're working on,
-  ask for help, tell us what's broken, or tell us what you wish these tools could do.
-  Whatever your medium and however long you've been at it, you're welcome here.
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/artcraft"><b>discord.gg/artcraft</b></a> ·
-  <a href="https://getartcraft.com/">getartcraft.com</a> ·
-  <a href="https://getartcraft.com/apps">The Crafting Apps</a> ·
-  <a href="https://getartcraft.com/apps/wordcraft">WordCraft</a>
-</p>
-
-## License and credits
-
-* **Code & Android fork (`lukasz-sklad/word-apk`):** Unofficial Android fork based on [WordCraft](https://github.com/storytold/wordcraft), Copyright (c) 2026 ArtCraft Team, WordCraft contributors, and fork contributors. Dual-licensed under **[MIT](LICENSE-MIT)** or **[Apache-2.0](LICENSE-APACHE)**, at your option. Required notices are in [NOTICE](NOTICE).
-* **Bundled assets & icons:** Open-source or original artwork only; every asset file, author, source, and license is recorded in [ATTRIBUTION.md](ATTRIBUTION.md). Non-open-source ArtCraft trademark files (`docs/brand/`) from upstream were removed in this fork.
-* **Bundled fonts:** `Inter`, `JetBrains Mono`, `Source Sans 3`, and `Source Serif 4` under **SIL Open Font License 1.1 (`OFL-1.1`)** (`assets/fonts/OFL-*.txt`).
-* **Bundled offline Polish dictionary & hyphenation (`android/app/src/main/assets/language-packs/pl/`):**
-  * Polish Hunspell spelling (`pl_PL` from SJP.PL / LibreOffice dictionaries): **Apache-2.0** (`LICENCES/Apache-2.0.txt`, `LICENCES/README_pl_PL.txt`).
-  * Polish TeX hyphenation patterns (Hanna Kołodziejska, Bogusław Jackowski, Marek Ryćko): **MIT** (`LICENCES/MIT.txt`).
-* **English proofing:** Public-domain Moby Hyphenator II list (Grady Ward) and SCOWL dictionaries (see [NOTICE](NOTICE)).
-
-### Licencje (PL)
-
-Ten nieoficjalny fork Androidowy jest wydawany w całości na otwartych licencjach (kod Rusta i Kotlina: **`MIT OR Apache-2.0`**, dołączone fonty: **`OFL-1.1`**, wbudowany offline’owy słownik polski: **`Apache-2.0`** oraz wzorce dzielenia wyrazów: **`MIT`**). Wszystkie niewolne znaki towarowe ArtCraftu (`docs/brand/`) zostały usunięte z repozytorium.
+---
 
 <p align="center">
   <sub>Unofficial Android fork based on <a href="https://github.com/storytold/wordcraft">WordCraft</a> — 100% FLOSS &amp; offline.</sub>
