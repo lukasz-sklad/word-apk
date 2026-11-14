@@ -766,11 +766,13 @@ impl AndroidThemeMode {
 
 /// Applies mobile-friendly defaults on WordCraft Android.
 ///
-/// Disables online startup update checks, skips desktop start-screen Backstage, collapses the full
-/// desktop ribbon when first launched so content fits on a phone viewport, and defaults to
-/// Document (`Print`) view on first launch so pages render at real proportions rather than stretched web text.
+/// Disables online startup update checks and upstream community/Discord links, skips desktop
+/// start-screen Backstage, collapses the full desktop ribbon when first launched so content fits on
+/// a phone viewport, and defaults to Document (`Print`) view on first launch so pages render at
+/// real proportions rather than stretched web text.
 pub fn apply_initial_mobile_defaults(app: &mut WordApp, had_saved_prefs: bool) {
     app.set_startup_update_check(false);
+    app.ui.show_discord = false;
     app.ui.start_screen = false;
     app.ui.backstage = false;
     app.ui.compact_chrome = true;
@@ -1027,10 +1029,16 @@ mod tests {
     fn mobile_defaults_and_theme_cycle() {
         let mut app = test_app();
         apply_initial_mobile_defaults(&mut app, false);
+        assert!(!app.ui.show_discord);
         assert!(!app.ui.start_screen);
         assert!(app.ui.ribbon_collapsed);
         assert!(app.ui.compact_chrome);
         assert_eq!(app.session.view.mode, ViewMode::Print);
+
+        // Even with previously saved desktop prefs, Android forces community/Discord off.
+        app.ui.show_discord = true;
+        apply_initial_mobile_defaults(&mut app, true);
+        assert!(!app.ui.show_discord);
 
         apply_initial_viewport_zoom(&mut app, 411.0);
         assert_eq!(app.session.view.fit, "pageWidth");

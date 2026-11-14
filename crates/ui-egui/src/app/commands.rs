@@ -803,7 +803,10 @@ impl WordApp {
                 ));
             }
             "ui.discord" => {
-                self.canvas.open_url = Some("https://discord.gg/artcraft".into());
+                #[cfg(not(target_os = "android"))]
+                {
+                    self.canvas.open_url = Some("https://discord.gg/artcraft".into());
+                }
                 json!({})
             }
             "ui.caretAnimation" => {

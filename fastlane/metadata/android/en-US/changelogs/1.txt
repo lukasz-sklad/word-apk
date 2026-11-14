@@ -1,0 +1,5 @@
+- Unofficial Android fork based on WordCraft 0.18.1 (APK 0.18.1.1)
+- Unified EN/PL top toolbar and accurate display cutout / window insets
+- Fixed Gboard Polish IME composition, suggestions and mid-word correction
+- Fixed touch drag selection mode (Sel / Zazn)
+- Removed INTERNET permission, updater, and Discord links; added fork notice in About

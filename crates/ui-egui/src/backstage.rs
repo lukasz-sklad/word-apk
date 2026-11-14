@@ -60,7 +60,7 @@ fn back_chevron_c(band_min_x: f32, center_y: f32, fullscreen: bool, content_left
 /// link with it.
 fn bottom_links(app: &WordApp) -> Vec<(&'static str, &'static str)> {
     let mut links = vec![("About", "about")];
-    if app.ui.show_discord {
+    if !cfg!(target_os = "android") && app.ui.show_discord {
         links.push(("Discord community", "discord"));
     }
     links

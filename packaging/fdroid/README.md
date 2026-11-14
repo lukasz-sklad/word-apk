@@ -6,13 +6,18 @@ Repozytorium jest przygotowane zarówno pod **własny sklep F-Droid na GitHub Pa
 
 ## Jak F-Droid wykrywa nowe wersje („podpinamy aktualizacje”)
 
+Stosujemy **4-częściowe wersjonowanie** (`<upstream>.<nasz_kolejny_numer>`):
+* Pierwsze trzy człony odpowiadają bazie z `upstream` (`Cargo.toml`, np. `0.18.1`, później `0.19.0`).
+* Czwarty człon należy do wydań Androida (`0.18.1.1` → `0.18.1.2` → …; po aktualizacji bazy do `0.19.0` przechodzimy na `0.19.0.1` → `0.19.0.2`).
+* **`versionCode` rośnie zawsze o +1** przy każdej nowej paczce (`1` → `2` → `3` → …), niezależnie od resetu czwartej cyfry po skoku bazy `upstream` — to po `versionCode` Android i F-Droid rozpoznają aktualizację.
+
 Przy każdej poprawce, którą chcesz wypuścić jako aktualizację:
-1. Zwiększ `versionCode` (np. `1` → `2`) oraz zmień `versionName` (np. `"0.18.1"` → `"0.18.2"`) w [`android/app/build.gradle.kts`](../../android/app/build.gradle.kts).
-2. Dopisz krótki opis zmian w `fastlane/metadata/android/pl-PL/changelogs/<versionCode>.txt` oraz `en-US/changelogs/<versionCode>.txt`.
-3. Zatwierdź zmiany na `main` i wypchnij pasujący tag wersji:
+1. Zwiększ `versionCode` (np. `1` → `2`) oraz zmień `versionName` (np. `"0.18.1.1"` → `"0.18.1.2"`, albo po aktualizacji rdzenia → `"0.19.0.1"`) w [`android/app/build.gradle.kts`](../../android/app/build.gradle.kts).
+2. Dopisz krótki opis zmian w pliku nazwanym numerem `versionCode`: `fastlane/metadata/android/pl-PL/changelogs/<versionCode>.txt` oraz `en-US/changelogs/<versionCode>.txt` (np. `2.txt`).
+3. Zatwierdź zmiany na `main` i wypchnij pasujący tag wersji (`v` + dokładne `versionName`):
    ```sh
-   git tag v0.18.2
-   git push origin v0.18.2
+   git tag v0.18.1.2
+   git push origin v0.18.1.2
    ```
 
 Po wypchnięciu tagu `v*`:

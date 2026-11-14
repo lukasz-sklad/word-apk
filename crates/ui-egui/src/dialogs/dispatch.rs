@@ -1174,10 +1174,21 @@ fn about_dialog(ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.label(egui::RichText::new(tl!("WordCraft")).font(semibold(22.0)));
             let build = option_env!("WORDCRAFT_BUILD_SHA").map(|s| s.get(..8).unwrap_or(s)).unwrap_or(tl!("development build"));
             ui.label(crate::i18n::fmt(tl!("Version {version} ({build})"), &[("version", env!("CARGO_PKG_VERSION")), ("build", build)]));
+            #[cfg(target_os = "android")]
+            {
+                let (fork_notice, fork_link_label) = android_about_fork_notice(crate::i18n::current().code());
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(fork_notice).small());
+                ui.hyperlink_to(fork_link_label, "https://github.com/lukasz-sklad/word-apk");
+                ui.add_space(4.0);
+            }
             ui.label(tl!("A free, open-source word processor written from scratch in Rust.\nPart of the Crafting Apps from the ArtCraft team."));
             ui.add_space(6.0);
-            ui.hyperlink_to(tl!("getartcraft.com/apps/wordcraft"), "https://getartcraft.com/apps/wordcraft");
-            ui.hyperlink_to(tl!("Join us on Discord: discord.gg/artcraft"), "https://discord.gg/artcraft");
+            #[cfg(not(target_os = "android"))]
+            {
+                ui.hyperlink_to(tl!("getartcraft.com/apps/wordcraft"), "https://getartcraft.com/apps/wordcraft");
+                ui.hyperlink_to(tl!("Join us on Discord: discord.gg/artcraft"), "https://discord.gg/artcraft");
+            }
             ui.hyperlink_to(tl!("Source code: github.com/storytold/wordcraft"), "https://github.com/storytold/wordcraft");
             ui.add_space(6.0);
             ui.label(egui::RichText::new(tl!("MIT OR Apache-2.0. Copyright (c) 2026 ArtCraft Team and the WordCraft contributors.")).small().weak());
@@ -1614,4 +1625,36 @@ fn check_errors_dialog(ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Recipients: {count}"), &[("count", &records.to_string())])).weak());
     let (ok, cancel) = buttons(ui, tl!("Close"));
     ok || cancel
+}
+
+/// Returns the localized (PL/EN) fork disclosure and Android repository link label shown in About.
+#[cfg(any(test, target_os = "android"))]
+fn android_about_fork_notice(lang_code: &str) -> (&'static str, &'static str) {
+    if lang_code == "pl" {
+        (
+            "Nieoficjalny fork dla Androida (WordCraft APK / lukasz-sklad/word-apk), działający w 100% offline.\nBłędy aplikacji mobilnej zgłaszaj w repozytorium lukasz-sklad/word-apk — nie na kanale ArtCraft/Discord.",
+            "Repozytorium Androida i zgłoszenia błędów: github.com/lukasz-sklad/word-apk",
+        )
+    } else {
+        (
+            "Unofficial Android fork (WordCraft APK / lukasz-sklad/word-apk), 100% offline.\nReport Android app issues at github.com/lukasz-sklad/word-apk — not on ArtCraft/Discord.",
+            "Android fork & issue tracker: github.com/lukasz-sklad/word-apk",
+        )
+    }
+}
+
+#[cfg(test)]
+mod android_about_tests {
+    use super::android_about_fork_notice;
+
+    #[test]
+    fn fork_notice_localizes_polish_and_english() {
+        let (pl_notice, pl_link) = android_about_fork_notice("pl");
+        assert!(pl_notice.contains("lukasz-sklad/word-apk"));
+        assert!(pl_link.contains("github.com/lukasz-sklad/word-apk"));
+
+        let (en_notice, en_link) = android_about_fork_notice("en");
+        assert!(en_notice.contains("lukasz-sklad/word-apk"));
+        assert!(en_link.contains("github.com/lukasz-sklad/word-apk"));
+    }
 }
