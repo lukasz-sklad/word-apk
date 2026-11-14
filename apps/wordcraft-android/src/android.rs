@@ -29,7 +29,7 @@ use crate::ime;
 use crate::mobile::{
     self, AndroidThemeMode, CzytajController, MobileStrings, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults,
     apply_initial_viewport_zoom, czytaj_is_playing, document_pan_rect, effective_ime_wanted, hover_to_egui_event, mobile_strings, prefs_write_atomic,
-    to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
+    step_utf8_by_chars, to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,14 +91,19 @@ impl ActivityBridge {
         self.call_void_int(jni_str!("setLightSystemBars"), i32::from(light));
     }
 
-    fn update_ime_selection(&self, surrounding: &str, sel_start: usize, sel_end: usize) {
+    fn update_ime_selection(&self, surrounding: &str, sel_start: usize, sel_end: usize, seq: u64) {
         let _ = self.vm.attach_current_thread(|env| -> jni::errors::Result<()> {
             let text_j = env.new_string(surrounding)?;
             let _ = env.call_method(
                 &*self.activity,
                 jni_str!("updateImeSurrounding"),
-                jni_sig!("(Ljava/lang/String;II)V"),
-                &[JValue::Object(&text_j), JValue::Int(sel_start as jint), JValue::Int(sel_end as jint)],
+                jni_sig!("(Ljava/lang/String;IIJ)V"),
+                &[
+                    JValue::Object(&text_j),
+                    JValue::Int(i32::try_from(sel_start).unwrap_or(i32::MAX)),
+                    JValue::Int(i32::try_from(sel_end).unwrap_or(i32::MAX)),
+                    JValue::Long(i64::try_from(seq).unwrap_or(i64::MAX)),
+                ],
             )?;
             Ok(())
         });
@@ -240,7 +245,9 @@ struct AndroidShell {
     theme_mode: AndroidThemeMode,
     ribbon_pinned_during_ime: bool,
     last_synced_bars_light: Option<bool>,
-    last_ime_snapshot: Option<(String, usize, usize)>,
+    last_ime_snapshot: Option<(String, usize, usize, u64)>,
+    acked_ime_seq: u64,
+    pending_ime_post_moves: Vec<(i32, i32)>,
     last_saved_prefs_json: String,
     czytaj: CzytajController,
     applied_initial_viewport_zoom: bool,
@@ -280,6 +287,8 @@ impl AndroidShell {
             ribbon_pinned_during_ime: false,
             last_synced_bars_light: None,
             last_ime_snapshot: None,
+            acked_ime_seq: 0,
+            pending_ime_post_moves: Vec::new(),
             last_saved_prefs_json: initial_prefs,
             czytaj: CzytajController::default(),
             applied_initial_viewport_zoom: false,
@@ -313,16 +322,19 @@ impl AndroidShell {
         if !self.app.canvas.focused {
             return;
         }
-        let Some(window) = self.app.session.doc.ime_surrounding(&self.app.session.sel.focus, &self.app.session.sel.anchor, 512) else {
-            return;
+        let seq = self.acked_ime_seq;
+        let (text, sel_start, sel_end) = match self.app.session.doc.ime_surrounding(&self.app.session.sel.focus, &self.app.session.sel.anchor, 2048) {
+            Some(window) => {
+                let s_u16 = utf8_byte_to_utf16_offset(&window.text, window.anchor);
+                let e_u16 = utf8_byte_to_utf16_offset(&window.text, window.cursor);
+                (window.text, s_u16.min(e_u16), s_u16.max(e_u16))
+            }
+            None => (String::new(), 0, 0),
         };
-        let s_u16 = utf8_byte_to_utf16_offset(&window.text, window.anchor);
-        let e_u16 = utf8_byte_to_utf16_offset(&window.text, window.cursor);
-        let (sel_start, sel_end) = (s_u16.min(e_u16), s_u16.max(e_u16));
-        let changed = self.last_ime_snapshot.as_ref().is_none_or(|(t, s, e)| t != &window.text || *s != sel_start || *e != sel_end);
+        let changed = self.last_ime_snapshot.as_ref().is_none_or(|(t, s, e, q)| t != &text || *s != sel_start || *e != sel_end || *q != seq);
         if changed {
-            self.bridge.update_ime_selection(&window.text, sel_start, sel_end);
-            self.last_ime_snapshot = Some((window.text, sel_start, sel_end));
+            self.bridge.update_ime_selection(&text, sel_start, sel_end, seq);
+            self.last_ime_snapshot = Some((text, sel_start, sel_end, seq));
         }
     }
 
@@ -507,6 +519,7 @@ impl AndroidShell {
         }
         if toolbar_pill(ui, s.select, self.select_mode, compact).clicked() {
             self.select_mode = !self.select_mode;
+            self.app.status(if self.select_mode { s.select_on_hint } else { s.select_off_hint });
         }
         let kb_active = (self.ime_wanted || self.insets.ime_visible) && !self.ime_suppressed;
         if toolbar_pill_enabled(ui, s.keyboard, kb_active, !self.ime_suppressed, compact).clicked() {
@@ -658,7 +671,16 @@ impl eframe::App for AndroidShell {
             raw.system_theme = Some(if dark { egui::Theme::Dark } else { egui::Theme::Light });
         }
 
-        let ime_events = to_egui_events(&ime::drain_inputs());
+        let slice = ime::drain_ime_frame_slice();
+        self.acked_ime_seq = self.acked_ime_seq.max(slice.acked_seq);
+        for (d_anchor, d_focus) in slice.pre_moves {
+            apply_ime_selection_relative(&mut self.app, d_anchor, d_focus);
+        }
+        self.pending_ime_post_moves.extend(slice.post_moves);
+        if slice.has_more {
+            ctx.request_repaint();
+        }
+        let ime_events = to_egui_events(&slice.events);
         raw.events.extend(ime_events);
 
         let ppp = ctx.pixels_per_point();
@@ -695,6 +717,9 @@ impl eframe::App for AndroidShell {
             apply_initial_viewport_zoom(&mut self.app, avail_w);
         }
         self.app.ui(ui);
+        for (d_anchor, d_focus) in std::mem::take(&mut self.pending_ime_post_moves) {
+            apply_ime_selection_relative(&mut self.app, d_anchor, d_focus);
+        }
 
         let wants_dialog_kb = ctx.egui_wants_keyboard_input() && !self.app.canvas.focused;
         if wants_dialog_kb && !self.prev_wants_kb {
@@ -717,6 +742,44 @@ impl eframe::App for AndroidShell {
             let _ = saf.flush_changed_outputs(&self.bridge);
         }
         self.persist_prefs_if_changed();
+    }
+}
+
+fn apply_ime_selection_relative(app: &mut WordApp, delta_anchor_cp: i32, delta_focus_cp: i32) {
+    let focus = app.session.sel.focus.clone();
+    let anchor = app.session.sel.anchor.clone();
+    if focus.story != anchor.story || focus.path != anchor.path {
+        return;
+    }
+    let Some(para) = app.session.doc.para_at(&focus) else {
+        return;
+    };
+    let view = wordcraft_doc::ime_text::VisibleParagraph::new(para);
+    let (Some(a_vis), Some(f_vis)) = (view.visible_offset(anchor.off), view.visible_offset(focus.off)) else {
+        return;
+    };
+    let cur_min_vis = a_vis.min(f_vis);
+    let min_stored = if a_vis <= f_vis { anchor } else { focus.clone() };
+    let Some(window) = app.session.doc.ime_surrounding(&min_stored, &min_stored, wordcraft_doc::ime_text::MAX_IME_TEXT_BYTES) else {
+        return;
+    };
+    let first_kept = cur_min_vis.saturating_sub(window.cursor);
+    let target_a_vis = first_kept.saturating_add(step_utf8_by_chars(&window.text, window.cursor, delta_anchor_cp));
+    let target_f_vis = first_kept.saturating_add(step_utf8_by_chars(&window.text, window.cursor, delta_focus_cp));
+    let to_pos = |vis: usize| {
+        view.stored_offset_after(vis).or_else(|| view.stored_offset_before(vis)).map(|off| wordcraft_doc::Pos {
+            story: focus.story,
+            path: focus.path.clone(),
+            off,
+        })
+    };
+    let (Some(new_anchor), Some(new_focus)) = (to_pos(target_a_vis), to_pos(target_f_vis)) else {
+        return;
+    };
+    if new_anchor == new_focus {
+        let _ = app.session.run("caret.set", &json!({ "pos": new_focus }));
+    } else {
+        let _ = app.session.run("select.range", &json!({ "anchor": new_anchor, "focus": new_focus }));
     }
 }
 

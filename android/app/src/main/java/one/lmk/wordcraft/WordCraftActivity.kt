@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Build
@@ -16,6 +17,7 @@ import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.text.InputType
+import android.text.TextUtils
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -24,16 +26,23 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedText
+import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.SurroundingText
+import android.view.inputmethod.TextAttribute
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.inputmethod.EditorInfoCompat
 import com.google.androidgamesdk.GameActivity
+import com.google.androidgamesdk.gametextinput.InputConnection as GameTextInputConnection
 import java.io.File
 import java.io.FileInputStream
 import java.util.Locale
@@ -71,14 +80,12 @@ class WordCraftActivity : GameActivity() {
     private var lastSentInsets: SurfaceInsets? = null
     private var displayListener: DisplayManager.DisplayListener? = null
 
-    @Volatile
-    private var currentSurroundingText = ""
-
-    @Volatile
-    private var currentSelStart = 0
-
-    @Volatile
-    private var currentSelEnd = 0
+    private val imeSessionLock = Any()
+    private val imeSession = ImeEditSession(KeyEvent.KEYCODE_DEL)
+    private var lastReportedSelStart = -1
+    private var lastReportedSelEnd = -1
+    private var lastReportedCompStart = -1
+    private var lastReportedCompEnd = -1
 
     private var activeConnection: WordCraftInputConnection? = null
     private var pendingSaveSuggestedName = "Document.docx"
@@ -108,6 +115,33 @@ class WordCraftActivity : GameActivity() {
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
             handleCreatedSaveUri(uri)
         }
+
+    override fun createSurfaceView(): InputEnabledSurfaceView {
+        // Keep GameActivity's SurfaceView from claiming View focus or spawning its own
+        // GameTextInput connection so all IME composition and suggestions go solely through imeProxy.
+        return object : InputEnabledSurfaceView(this) {
+            override fun setFocusable(focusable: Boolean) {
+                super.setFocusable(false)
+            }
+
+            override fun setFocusable(focusable: Int) {
+                super.setFocusable(View.NOT_FOCUSABLE)
+            }
+
+            override fun setFocusableInTouchMode(focusableInTouchMode: Boolean) {
+                super.setFocusableInTouchMode(false)
+            }
+
+            override fun requestFocus(direction: Int, previouslyFocusedRect: Rect?): Boolean = false
+
+            override fun onCheckIsTextEditor(): Boolean = false
+
+            override fun onCreateInputConnection(outAttrs: EditorInfo): GameTextInputConnection? = null
+        }.apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -265,7 +299,7 @@ class WordCraftActivity : GameActivity() {
             lastImeVisible = imeVisible
             if (wasVisible && !imeVisible) {
                 imeWanted = false
-                activeConnection?.clearComposingState()
+                clearImeComposingState()
                 nativeOnImeHidden()
             }
             ViewCompat.onApplyWindowInsets(view, insets)
@@ -367,7 +401,7 @@ class WordCraftActivity : GameActivity() {
     }
 
     private fun hideImeNow() {
-        activeConnection?.clearComposingState()
+        clearImeComposingState()
         if (imeProxy.hasFocus()) {
             imeProxy.clearFocus()
         }
@@ -414,17 +448,84 @@ class WordCraftActivity : GameActivity() {
         }
     }
 
+    private fun clearImeComposingState() {
+        synchronized(imeSessionLock) {
+            imeSession.resetConnectionState()
+        }
+        lastReportedSelStart = -1
+        lastReportedSelEnd = -1
+        lastReportedCompStart = -1
+        lastReportedCompEnd = -1
+        activeConnection?.clearMonitor()
+    }
+
+    private fun syncSelectionAndExtractToImm(snap: ImeSnapshot) {
+        val mgr = imm() ?: return
+        val view = imeProxy
+        if (
+            snap.selStart != lastReportedSelStart ||
+                snap.selEnd != lastReportedSelEnd ||
+                snap.compStart != lastReportedCompStart ||
+                snap.compEnd != lastReportedCompEnd
+        ) {
+            lastReportedSelStart = snap.selStart
+            lastReportedSelEnd = snap.selEnd
+            lastReportedCompStart = snap.compStart
+            lastReportedCompEnd = snap.compEnd
+            mgr.updateSelection(view, snap.selStart, snap.selEnd, snap.compStart, snap.compEnd)
+        }
+        activeConnection?.notifyExtractedTextIfMonitored(mgr, view, snap)
+    }
+
+    private fun reportSnapshotToImm(snap: ImeSnapshot) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            syncSelectionAndExtractToImm(snap)
+        } else {
+            runOnUiThread {
+                val (inBatch, latest) = synchronized(imeSessionLock) {
+                    imeSession.isInBatch() to imeSession.virtualSnapshot()
+                }
+                if (!inBatch) {
+                    syncSelectionAndExtractToImm(latest)
+                }
+            }
+        }
+    }
+
+    private fun flushImeBatch(flush: ImeBatchFlush?) {
+        if (flush == null || flush.ops.isEmpty()) {
+            return
+        }
+        nativeOnImeBatchStart()
+        for (op in flush.ops) {
+            when (op) {
+                is ImeOp.Preedit -> nativeOnImeStagePreedit(op.text, op.cursorStartCp, op.cursorEndCp)
+                is ImeOp.Commit -> nativeOnImeStageCommit(op.text)
+                is ImeOp.DeleteSurrounding -> nativeOnImeStageDeleteSurrounding(op.beforeCp, op.afterCp)
+                is ImeOp.SetSelectionRelative -> nativeOnImeStageSetSelectionRelative(op.deltaAnchorCp, op.deltaFocusCp)
+                is ImeOp.TapKeyCode -> {
+                    nativeOnImeStageKey(op.keyCode, 1)
+                    nativeOnImeStageKey(op.keyCode, 0)
+                }
+            }
+        }
+        nativeOnImeBatchCommit(flush.seq)
+    }
+
     @Suppress("unused")
-    fun updateImeSurrounding(text: String, selStart: Int, selEnd: Int) {
-        val clampedStart = selStart.coerceIn(0, text.length)
-        val clampedEnd = selEnd.coerceIn(clampedStart, text.length)
-        currentSurroundingText = text
-        currentSelStart = clampedStart
-        currentSelEnd = clampedEnd
-        runOnUiThread {
-            val conn = activeConnection ?: return@runOnUiThread
-            if (!conn.isBusyWithImeEdit()) {
-                imm()?.updateSelection(imeProxy, clampedStart, clampedEnd, -1, -1)
+    fun updateImeSurrounding(text: String, selStart: Int, selEnd: Int, seq: Long) {
+        val changed = synchronized(imeSessionLock) {
+            imeSession.syncFromRust(text, selStart, selEnd, seq)
+        }
+        if (changed) {
+            runOnUiThread {
+                val (shouldReport, snap) = synchronized(imeSessionLock) {
+                    val ok = !imeSession.isInBatch() && imeSession.currentSeq() == seq
+                    ok to imeSession.virtualSnapshot()
+                }
+                if (shouldReport && activeConnection != null) {
+                    syncSelectionAndExtractToImm(snap)
+                }
             }
         }
     }
@@ -788,7 +889,12 @@ class WordCraftActivity : GameActivity() {
         }
         val uni = event.unicodeChar
         if (pressed && uni != 0 && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed) {
-            nativeOnImeCommit(String(Character.toChars(uni)))
+            val ch = String(Character.toChars(uni))
+            val (flush, snap) = synchronized(imeSessionLock) {
+                imeSession.commitText(ch, 1) to imeSession.virtualSnapshot()
+            }
+            flushImeBatch(flush)
+            reportSnapshotToImm(snap)
             return true
         }
         return false
@@ -801,7 +907,7 @@ class WordCraftActivity : GameActivity() {
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         }
 
-        override fun onCheckIsTextEditor(): Boolean = !owner.imeSuppressed
+        override fun onCheckIsTextEditor(): Boolean = owner.imeWanted && !owner.imeSuppressed
 
         override fun onTouchEvent(event: MotionEvent?): Boolean = false
 
@@ -813,12 +919,17 @@ class WordCraftActivity : GameActivity() {
             outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
                 EditorInfo.IME_FLAG_NO_EXTRACT_UI or
                 EditorInfo.IME_ACTION_NONE
-            val text = owner.currentSurroundingText
-            val start = owner.currentSelStart.coerceIn(0, text.length)
-            val end = owner.currentSelEnd.coerceIn(start, text.length)
-            outAttrs.initialSelStart = start
-            outAttrs.initialSelEnd = end
-            EditorInfoCompat.setInitialSurroundingText(outAttrs, text)
+            val snap = synchronized(owner.imeSessionLock) {
+                owner.imeSession.resetConnectionState()
+                owner.imeSession.virtualSnapshot()
+            }
+            outAttrs.initialSelStart = snap.selStart
+            outAttrs.initialSelEnd = snap.selEnd
+            EditorInfoCompat.setInitialSurroundingText(outAttrs, snap.text)
+            owner.lastReportedSelStart = snap.selStart
+            owner.lastReportedSelEnd = snap.selEnd
+            owner.lastReportedCompStart = -1
+            owner.lastReportedCompEnd = -1
             val conn = WordCraftInputConnection(this, owner)
             owner.activeConnection = conn
             return conn
@@ -843,113 +954,186 @@ class WordCraftActivity : GameActivity() {
         view: View,
         private val owner: WordCraftActivity
     ) : BaseInputConnection(view, false) {
-        private var composingText = ""
-        private var batchDepth = 0
+        @Volatile
+        private var extractedTextMonitor: ExtractedTextRequest? = null
 
-        fun clearComposingState() {
-            composingText = ""
+        fun clearMonitor() {
+            extractedTextMonitor = null
         }
 
-        fun isBusyWithImeEdit(): Boolean = composingText.isNotEmpty() || batchDepth > 0
+        private fun snapshotForIc(): ImeSnapshot = synchronized(owner.imeSessionLock) {
+            owner.imeSession.virtualSnapshot()
+        }
+
+        private fun buildExtractedText(snap: ImeSnapshot, req: ExtractedTextRequest?): ExtractedText =
+            ExtractedText().apply {
+                val hintMax = req?.hintMaxChars ?: 0
+                val maxChars = if (hintMax > 0) hintMax else Int.MAX_VALUE
+                val rawText = if (snap.text.length > maxChars) {
+                    snap.text.substring(0, ImeEditSession.clampU16BoundaryDown(snap.text, maxChars))
+                } else {
+                    snap.text
+                }
+                text = rawText
+                startOffset = 0
+                partialStartOffset = -1
+                partialEndOffset = -1
+                selectionStart = snap.selStart.coerceIn(0, rawText.length)
+                selectionEnd = snap.selEnd.coerceIn(selectionStart, rawText.length)
+                flags = if (selectionStart != selectionEnd) ExtractedText.FLAG_SELECTING else 0
+            }
+
+        fun notifyExtractedTextIfMonitored(mgr: InputMethodManager, view: View, snap: ImeSnapshot) {
+            val req = extractedTextMonitor ?: return
+            mgr.updateExtractedText(view, req.token, buildExtractedText(snap, req))
+        }
+
+        private inline fun applySessionEdit(edit: (ImeEditSession) -> ImeBatchFlush?): Boolean {
+            val (flush, inBatch, snap) = synchronized(owner.imeSessionLock) {
+                val batchFlush = edit(owner.imeSession)
+                val batchActive = owner.imeSession.isInBatch()
+                Triple(batchFlush, batchActive, if (!batchActive) owner.imeSession.virtualSnapshot() else null)
+            }
+            owner.flushImeBatch(flush)
+            if (!inBatch && snap != null) {
+                owner.reportSnapshotToImm(snap)
+            }
+            return true
+        }
+
+        override fun closeConnection() {
+            extractedTextMonitor = null
+            synchronized(owner.imeSessionLock) {
+                owner.imeSession.resetConnectionState()
+            }
+            super.closeConnection()
+        }
 
         override fun beginBatchEdit(): Boolean {
-            batchDepth += 1
+            synchronized(owner.imeSessionLock) {
+                owner.imeSession.beginBatchEdit()
+            }
             return true
         }
 
         override fun endBatchEdit(): Boolean {
-            if (batchDepth > 0) {
-                batchDepth -= 1
+            val (stillInBatch, flush, snap) = synchronized(owner.imeSessionLock) {
+                val (inBatch, batchFlush) = owner.imeSession.endBatchEdit()
+                Triple(inBatch, batchFlush, if (!inBatch) owner.imeSession.virtualSnapshot() else null)
             }
-            return batchDepth > 0
+            owner.flushImeBatch(flush)
+            if (!stillInBatch && snap != null) {
+                owner.reportSnapshotToImm(snap)
+            }
+            return stillInBatch
         }
 
         override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence {
             if (n <= 0) {
                 return ""
             }
-            val text = owner.currentSurroundingText
-            val end = owner.currentSelStart.coerceIn(0, text.length)
-            val start = (end - n).coerceAtLeast(0)
-            return text.substring(start, end)
+            val snap = snapshotForIc()
+            val end = snap.selStart.coerceIn(0, snap.text.length)
+            val start = ImeEditSession.clampU16BoundaryUp(snap.text, (end - n).coerceAtLeast(0)).coerceAtMost(end)
+            return snap.text.substring(start, end)
         }
 
         override fun getTextAfterCursor(n: Int, flags: Int): CharSequence {
             if (n <= 0) {
                 return ""
             }
-            val text = owner.currentSurroundingText
-            val start = owner.currentSelEnd.coerceIn(0, text.length)
-            val end = (start + n).coerceAtMost(text.length)
-            return text.substring(start, end)
+            val snap = snapshotForIc()
+            val start = snap.selEnd.coerceIn(0, snap.text.length)
+            val end = ImeEditSession.clampU16BoundaryDown(snap.text, (start + n).coerceAtMost(snap.text.length)).coerceAtLeast(start)
+            return snap.text.substring(start, end)
         }
 
         override fun getSelectedText(flags: Int): CharSequence? {
-            val text = owner.currentSurroundingText
-            val start = owner.currentSelStart.coerceIn(0, text.length)
-            val end = owner.currentSelEnd.coerceIn(start, text.length)
-            return if (start == end) null else text.substring(start, end)
+            val snap = snapshotForIc()
+            val start = snap.selStart.coerceIn(0, snap.text.length)
+            val end = snap.selEnd.coerceIn(start, snap.text.length)
+            return if (start == end) null else snap.text.substring(start, end)
         }
 
-        override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
-            val s = text?.toString().orEmpty()
-            composingText = s
-            val cursor = if (newCursorPosition > 0) s.codePointCount(0, s.length) else 0
-            owner.nativeOnImePreedit(s, cursor, cursor)
-            return true
+        @RequiresApi(Build.VERSION_CODES.S)
+        override fun getSurroundingText(beforeLength: Int, afterLength: Int, flags: Int): SurroundingText {
+            val snap = snapshotForIc()
+            val selStart = snap.selStart.coerceIn(0, snap.text.length)
+            val selEnd = snap.selEnd.coerceIn(selStart, snap.text.length)
+            val beforeStart = ImeEditSession.clampU16BoundaryUp(
+                snap.text,
+                (selStart - beforeLength.coerceAtLeast(0)).coerceAtLeast(0),
+            ).coerceAtMost(selStart)
+            val afterEnd = ImeEditSession.clampU16BoundaryDown(
+                snap.text,
+                (selEnd + afterLength.coerceAtLeast(0)).coerceAtMost(snap.text.length),
+            ).coerceAtLeast(selEnd)
+            return SurroundingText(
+                snap.text.substring(beforeStart, afterEnd),
+                selStart - beforeStart,
+                selEnd - beforeStart,
+                beforeStart,
+            )
         }
 
-        override fun setComposingRegion(start: Int, end: Int): Boolean = start == end
-
-        override fun finishComposingText(): Boolean {
-            val pending = composingText
-            composingText = ""
-            if (pending.isNotEmpty()) {
-                owner.nativeOnImeCommit(pending)
-            } else {
-                owner.nativeOnImePreedit("", 0, 0)
+        override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText? {
+            if (request != null) {
+                extractedTextMonitor = if ((flags and InputConnection.GET_EXTRACTED_TEXT_MONITOR) != 0) request else null
             }
-            return true
+            return buildExtractedText(snapshotForIc(), request)
         }
 
-        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
-            val s = text?.toString().orEmpty()
-            composingText = ""
-            owner.nativeOnImeCommit(s)
-            return true
+        override fun getCursorCapsMode(reqModes: Int): Int {
+            if (reqModes == 0) {
+                return 0
+            }
+            val snap = snapshotForIc()
+            return TextUtils.getCapsMode(snap.text, snap.selStart.coerceIn(0, snap.text.length), reqModes)
         }
 
-        override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
-            if (beforeLength <= 0 && afterLength <= 0) {
-                return true
-            }
-            val text = owner.currentSurroundingText
-            val selStart = owner.currentSelStart.coerceIn(0, text.length)
-            val selEnd = owner.currentSelEnd.coerceIn(selStart, text.length)
-            val beforeChars = if (beforeLength <= 0) {
-                0
-            } else if (beforeLength <= selStart) {
-                Character.codePointCount(text, selStart - beforeLength, selStart).coerceAtLeast(1)
-            } else {
-                beforeLength
-            }
-            val afterChars = if (afterLength <= 0) {
-                0
-            } else if (selEnd + afterLength <= text.length) {
-                Character.codePointCount(text, selEnd, selEnd + afterLength).coerceAtLeast(1)
-            } else {
-                afterLength
-            }
-            owner.nativeOnImeDeleteSurrounding(beforeChars, afterChars)
-            return true
-        }
+        override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean =
+            applySessionEdit { it.setComposingText(text, newCursorPosition) }
 
-        override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
-            if (beforeLength > 0 || afterLength > 0) {
-                owner.nativeOnImeDeleteSurrounding(beforeLength.coerceAtLeast(0), afterLength.coerceAtLeast(0))
-            }
-            return true
-        }
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        override fun setComposingText(text: CharSequence, newCursorPosition: Int, textAttribute: TextAttribute?): Boolean =
+            setComposingText(text, newCursorPosition)
+
+        override fun setComposingRegion(start: Int, end: Int): Boolean =
+            applySessionEdit { it.setComposingRegion(start, end) }
+
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        override fun setComposingRegion(start: Int, end: Int, textAttribute: TextAttribute?): Boolean =
+            setComposingRegion(start, end)
+
+        override fun finishComposingText(): Boolean =
+            applySessionEdit { it.finishComposingText() }
+
+        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+            applySessionEdit { it.commitText(text, newCursorPosition) }
+
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        override fun commitText(text: CharSequence, newCursorPosition: Int, textAttribute: TextAttribute?): Boolean =
+            commitText(text, newCursorPosition)
+
+        @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+        override fun replaceText(
+            start: Int,
+            end: Int,
+            text: CharSequence,
+            newCursorPosition: Int,
+            textAttribute: TextAttribute?,
+        ): Boolean = applySessionEdit { it.replaceText(start, end, text, newCursorPosition) }
+
+        override fun commitCorrection(correctionInfo: CorrectionInfo?): Boolean = true
+
+        override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean =
+            applySessionEdit { it.deleteSurroundingText(beforeLength, afterLength) }
+
+        override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean =
+            applySessionEdit { it.deleteSurroundingTextInCodePoints(beforeLength, afterLength) }
+
+        override fun setSelection(start: Int, end: Int): Boolean =
+            applySessionEdit { it.setSelection(start, end) }
 
         override fun sendKeyEvent(event: KeyEvent): Boolean {
             if (owner.handleHardwareOrImeKey(event)) {
@@ -960,9 +1144,13 @@ class WordCraftActivity : GameActivity() {
     }
 
     private external fun nativeOnInsets(left: Int, top: Int, right: Int, bottom: Int, imeBottom: Int)
-    private external fun nativeOnImePreedit(text: String, cursorStart: Int, cursorEnd: Int)
-    private external fun nativeOnImeCommit(text: String)
-    private external fun nativeOnImeDeleteSurrounding(before: Int, after: Int)
+    private external fun nativeOnImeBatchStart()
+    private external fun nativeOnImeStagePreedit(text: String, cursorStart: Int, cursorEnd: Int)
+    private external fun nativeOnImeStageCommit(text: String)
+    private external fun nativeOnImeStageDeleteSurrounding(before: Int, after: Int)
+    private external fun nativeOnImeStageSetSelectionRelative(deltaAnchorCp: Int, deltaFocusCp: Int)
+    private external fun nativeOnImeStageKey(keycode: Int, pressed: Int)
+    private external fun nativeOnImeBatchCommit(seq: Long)
     private external fun nativeOnImeKey(keycode: Int, pressed: Int)
     private external fun nativeOnImeHidden()
     private external fun nativeOnFilePickerResult(pathsJoined: String, urisJoined: String, errorMsg: String)

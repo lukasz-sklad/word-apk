@@ -118,7 +118,85 @@ pub enum AndroidInput {
     Preedit { text: String, cursor_start: i32, cursor_end: i32 },
     Commit(String),
     DeleteSurrounding { before: i32, after: i32 },
+    SetSelectionRelative { delta_anchor_cp: i32, delta_focus_cp: i32 },
     Key { key: AndroidKey, pressed: bool },
+}
+
+/// Queue entry tagged with the Java IME transaction sequence that produced it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueuedInput {
+    pub item: AndroidInput,
+    pub seq: u64,
+}
+
+/// One frame's ordered slice of Android IME actions split around selection moves.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ImeFrameSlice {
+    /// Cursor/selection moves to apply to the document before `egui` processes this frame's events.
+    pub pre_moves: Vec<(i32, i32)>,
+    /// Contiguous IME/key events forwarded through `egui::RawInput::events`.
+    pub events: Vec<AndroidInput>,
+    /// Cursor/selection moves requested immediately after `events`, before surrounding sync.
+    pub post_moves: Vec<(i32, i32)>,
+    /// Highest transaction sequence included in this slice.
+    pub acked_seq: u64,
+    /// True when more queued operations wait behind `post_moves` for the next frame.
+    pub has_more: bool,
+}
+
+/// Extracts at most one ordered `pre_moves -> events -> post_moves` transaction slice from `queue`.
+///
+/// Leaving anything after `post_moves` for the next frame keeps interleaved batches strictly
+/// ordered without advancing `acked_seq` past unconsumed batches.
+pub fn take_ime_frame_slice(queue: &mut Vec<QueuedInput>, current_acked_seq: u64) -> ImeFrameSlice {
+    let mut slice = ImeFrameSlice { acked_seq: current_acked_seq, ..Default::default() };
+    let mut phase = 0u8;
+    let mut cut = 0usize;
+    for entry in queue.iter() {
+        match entry.item {
+            AndroidInput::SetSelectionRelative { delta_anchor_cp, delta_focus_cp } => {
+                if phase == 1 {
+                    phase = 2;
+                }
+                if phase == 0 {
+                    slice.pre_moves.push((delta_anchor_cp, delta_focus_cp));
+                } else {
+                    slice.post_moves.push((delta_anchor_cp, delta_focus_cp));
+                }
+                slice.acked_seq = slice.acked_seq.max(entry.seq);
+                cut += 1;
+            }
+            _ => {
+                if phase == 2 {
+                    break;
+                }
+                phase = 1;
+                slice.events.push(entry.item.clone());
+                slice.acked_seq = slice.acked_seq.max(entry.seq);
+                cut += 1;
+            }
+        }
+    }
+    if cut > 0 {
+        queue.drain(..cut);
+    }
+    slice.has_more = !queue.is_empty();
+    slice
+}
+
+/// Steps `byte_off` inside `text` by `delta_cp` Unicode scalar values, clamping at `[0, text.len()]`.
+pub fn step_utf8_by_chars(text: &str, byte_off: usize, delta_cp: i32) -> usize {
+    let mut origin = byte_off.min(text.len());
+    while origin > 0 && !text.is_char_boundary(origin) {
+        origin -= 1;
+    }
+    if delta_cp >= 0 {
+        let steps = usize::try_from(delta_cp).unwrap_or(0);
+        text.get(origin..).and_then(|s| s.char_indices().nth(steps)).map_or(text.len(), |(rel, _)| origin + rel)
+    } else {
+        let steps = usize::try_from(delta_cp.unsigned_abs()).unwrap_or(usize::MAX);
+        text.get(..origin).and_then(|s| s.char_indices().rev().nth(steps.saturating_sub(1))).map_or(0, |(idx, _)| idx)
+    }
 }
 
 /// Truncates `s` on a UTF-8 character boundary at or below `max_bytes`.
@@ -226,6 +304,7 @@ pub fn to_egui_events(batch: &[AndroidInput]) -> Vec<Event> {
                     out.push(Event::Ime(ImeEvent::DeleteSurrounding { before_chars: before_u, after_chars: after_u }));
                 }
             }
+            AndroidInput::SetSelectionRelative { .. } => {}
             AndroidInput::Key { key, pressed } => {
                 out.push(Event::Key { key: key.to_egui(), physical_key: None, pressed: *pressed, repeat: false, modifiers: Modifiers::NONE });
             }
@@ -562,6 +641,8 @@ pub struct MobileStrings {
     pub theme_sepia: &'static str,
     pub theme_dark: &'static str,
     pub nothing_to_read: &'static str,
+    pub select_on_hint: &'static str,
+    pub select_off_hint: &'static str,
     pub open_failed_prefix: &'static str,
     page_short: &'static str,
     words_short: &'static str,
@@ -587,6 +668,8 @@ const EN_STRINGS: MobileStrings = MobileStrings {
     theme_sepia: "Sepia",
     theme_dark: "Dark",
     nothing_to_read: "Nothing to read",
+    select_on_hint: "Select mode: drag finger across text to select",
+    select_off_hint: "Scroll mode: drag to pan, tap to type",
     open_failed_prefix: "Open failed",
     page_short: "P",
     words_short: "w",
@@ -612,6 +695,8 @@ const PL_STRINGS: MobileStrings = MobileStrings {
     theme_sepia: "Sepia",
     theme_dark: "Ciemny",
     nothing_to_read: "Brak tekstu do czytania",
+    select_on_hint: "Tryb zaznaczania: przeciągnij palcem po tekście",
+    select_off_hint: "Tryb przewijania: przesuwaj palcem, stuknij aby pisać",
     open_failed_prefix: "Błąd otwierania",
     page_short: "S",
     words_short: " sł.",
@@ -1128,5 +1213,79 @@ mod tests {
         assert_eq!(mobile_strings("de"), en);
         assert_eq!(mobile_strings("ja"), en);
         assert_eq!(mobile_strings(""), en);
+        assert!(!en.select_on_hint.is_empty() && !en.select_off_hint.is_empty());
+        let pl = mobile_strings("pl");
+        assert!(!pl.select_on_hint.is_empty() && !pl.select_off_hint.is_empty());
+        assert_ne!(pl.select_on_hint, en.select_on_hint);
+    }
+
+    #[test]
+    fn step_utf8_by_chars_handles_polish_and_emoji() {
+        let text = "😊 Może być";
+        let end = text.len();
+        assert_eq!(step_utf8_by_chars(text, end, -3), "😊 Może ".len());
+        assert_eq!(step_utf8_by_chars(text, 0, 2), "😊 ".len());
+        assert_eq!(step_utf8_by_chars(text, 0, 99), end);
+        assert_eq!(step_utf8_by_chars(text, end, -99), 0);
+        // Unaligned interior byte rounds down safely without panicking.
+        assert_eq!(step_utf8_by_chars(text, 2, 1), "😊".len());
+    }
+
+    #[test]
+    fn ime_frame_slice_splits_pre_and_post_moves_in_order() {
+        let mut queue = vec![
+            QueuedInput { item: AndroidInput::SetSelectionRelative { delta_anchor_cp: -4, delta_focus_cp: 0 }, seq: 1 },
+            QueuedInput { item: AndroidInput::Commit("Może".into()), seq: 1 },
+            QueuedInput { item: AndroidInput::SetSelectionRelative { delta_anchor_cp: -2, delta_focus_cp: -2 }, seq: 2 },
+            QueuedInput { item: AndroidInput::Commit("!".into()), seq: 3 },
+        ];
+        let first = take_ime_frame_slice(&mut queue, 0);
+        assert_eq!(first.pre_moves, vec![(-4, 0)]);
+        assert_eq!(first.events, vec![AndroidInput::Commit("Może".into())]);
+        assert_eq!(first.post_moves, vec![(-2, -2)]);
+        assert_eq!(first.acked_seq, 2);
+        assert!(first.has_more);
+
+        let second = take_ime_frame_slice(&mut queue, first.acked_seq);
+        assert!(second.pre_moves.is_empty());
+        assert_eq!(second.events, vec![AndroidInput::Commit("!".into())]);
+        assert!(second.post_moves.is_empty());
+        assert_eq!(second.acked_seq, 3);
+        assert!(!second.has_more);
+    }
+
+    #[test]
+    fn touch_filter_select_mode_drags_without_scroll_or_tap_keyboard() {
+        let vp = Some(Rect::from_min_size(pos2(0.0, 50.0), vec2(400.0, 700.0)));
+        let mut filter = TouchGestureFilter::default();
+
+        let mut frame1 =
+            vec![touch(5, TouchPhase::Start, pos2(100.0, 200.0)), Event::PointerMoved(pos2(100.0, 200.0)), press(pos2(100.0, 200.0), true)];
+        let o1 = filter.process(&mut frame1, vp, true, false);
+        assert!(!o1.tapped_canvas);
+        assert!(!frame1.iter().any(|e| matches!(e, Event::MouseWheel { .. })));
+        assert!(frame1.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })));
+
+        let mut frame2 = vec![touch(5, TouchPhase::Move, pos2(220.0, 240.0)), Event::PointerMoved(pos2(220.0, 240.0))];
+        let o2 = filter.process(&mut frame2, vp, true, false);
+        assert!(!o2.tapped_canvas);
+        assert!(!frame2.iter().any(|e| matches!(e, Event::MouseWheel { .. })));
+        assert!(frame2.iter().any(|e| matches!(e, Event::PointerMoved(p) if *p == pos2(220.0, 240.0))));
+
+        let mut frame3 = vec![touch(5, TouchPhase::End, pos2(220.0, 240.0)), press(pos2(220.0, 240.0), false), Event::PointerGone];
+        let o3 = filter.process(&mut frame3, vp, true, false);
+        assert!(!o3.tapped_canvas);
+        assert!(frame3.iter().any(|e| matches!(e, Event::PointerButton { pressed: false, .. })));
+
+        // Two-finger pinch still zooms cleanly even while select_mode is active.
+        let mut pinch = vec![
+            touch(6, TouchPhase::Start, pos2(100.0, 200.0)),
+            touch(7, TouchPhase::Start, pos2(200.0, 200.0)),
+            touch(7, TouchPhase::Move, pos2(230.0, 200.0)),
+            touch(6, TouchPhase::End, pos2(100.0, 200.0)),
+            touch(7, TouchPhase::End, pos2(230.0, 200.0)),
+        ];
+        filter.process(&mut pinch, vp, true, false);
+        assert!(pinch.iter().any(|e| matches!(e, Event::Zoom(_))));
     }
 }

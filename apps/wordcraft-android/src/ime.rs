@@ -13,12 +13,12 @@ use android_activity::AndroidAppWaker;
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JObject, JString, JValue};
 use jni::refs::Global;
-use jni::sys::{jfloat, jint};
+use jni::sys::{jfloat, jint, jlong};
 use jni::{Env, EnvUnowned, JavaVM, jni_sig, jni_str};
 use wordcraft_engine::speech::PlatformSpoken;
 use wordcraft_ui_egui::FileDialogAnswer;
 
-use crate::mobile::{AndroidInput, AndroidKey, MAX_IME_BYTES, SafeInsetsPx, truncate_utf8_bytes};
+use crate::mobile::{AndroidInput, AndroidKey, ImeFrameSlice, MAX_IME_BYTES, QueuedInput, SafeInsetsPx, take_ime_frame_slice, truncate_utf8_bytes};
 
 const MAX_QUEUED_INPUTS: usize = 4096;
 const MAX_QUEUED_OPENS: usize = 32;
@@ -39,7 +39,10 @@ pub struct PendingOpen {
 
 #[derive(Default)]
 struct SharedQueues {
-    inputs: Vec<AndroidInput>,
+    inputs: Vec<QueuedInput>,
+    staged_inputs: Vec<AndroidInput>,
+    latest_seq: u64,
+    acked_seq: u64,
     wheel_deltas: Vec<(f32, f32)>,
     mouse_hover_px: Option<(f32, f32)>,
     insets: SafeInsetsPx,
@@ -51,6 +54,9 @@ struct SharedQueues {
 
 static QUEUES: Mutex<SharedQueues> = Mutex::new(SharedQueues {
     inputs: Vec::new(),
+    staged_inputs: Vec::new(),
+    latest_seq: 0,
+    acked_seq: 0,
     wheel_deltas: Vec::new(),
     mouse_hover_px: None,
     insets: SafeInsetsPx { left: 0, top: 0, right: 0, bottom: 0, ime_bottom: 0 },
@@ -123,6 +129,9 @@ pub fn bind_waker(waker: AndroidAppWaker) {
     }
     if let Ok(mut q) = QUEUES.lock() {
         q.inputs.clear();
+        q.staged_inputs.clear();
+        q.latest_seq = 0;
+        q.acked_seq = 0;
         q.wheel_deltas.clear();
         q.mouse_hover_px = None;
         q.ime_dismissed = false;
@@ -143,14 +152,31 @@ fn push_input(item: AndroidInput) {
     if let Ok(mut q) = QUEUES.lock()
         && q.inputs.len() < MAX_QUEUED_INPUTS
     {
-        q.inputs.push(item);
+        let seq = q.latest_seq;
+        q.inputs.push(QueuedInput { item, seq });
     }
     wake_ui();
 }
 
-/// Drains all queued Android IME / key inputs for the current frame.
-pub fn drain_inputs() -> Vec<AndroidInput> {
-    QUEUES.lock().map(|mut q| std::mem::take(&mut q.inputs)).unwrap_or_default()
+fn push_staged_input(item: AndroidInput) {
+    if let Ok(mut q) = QUEUES.lock()
+        && q.staged_inputs.len() < MAX_QUEUED_INPUTS
+    {
+        q.staged_inputs.push(item);
+    }
+}
+
+/// Drains one ordered slice of queued Android IME / key inputs for the current frame.
+pub fn drain_ime_frame_slice() -> ImeFrameSlice {
+    QUEUES
+        .lock()
+        .map(|mut q| {
+            let current_acked = q.acked_seq;
+            let slice = take_ime_frame_slice(&mut q.inputs, current_acked);
+            q.acked_seq = slice.acked_seq;
+            slice
+        })
+        .unwrap_or_default()
 }
 
 /// Drains queued Android mouse-wheel `(AXIS_HSCROLL, AXIS_VSCROLL)` deltas for the current frame.
@@ -363,7 +389,15 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnInsets(
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImePreedit<'caller>(
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeBatchStart(_env: EnvUnowned<'_>, _obj: JObject<'_>) {
+    if let Ok(mut q) = QUEUES.lock() {
+        q.staged_inputs.clear();
+    }
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeStagePreedit<'caller>(
     mut unowned_env: EnvUnowned<'caller>,
     _obj: JObject<'caller>,
     text: JString<'caller>,
@@ -373,7 +407,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImePreed
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
             let owned = read_jstring(env, &text)?;
-            push_input(AndroidInput::Preedit { text: owned, cursor_start, cursor_end });
+            push_staged_input(AndroidInput::Preedit { text: owned, cursor_start, cursor_end });
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();
@@ -381,7 +415,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImePreed
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeCommit<'caller>(
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeStageCommit<'caller>(
     mut unowned_env: EnvUnowned<'caller>,
     _obj: JObject<'caller>,
     text: JString<'caller>,
@@ -389,7 +423,7 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeCommi
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
             let owned = read_jstring(env, &text)?;
-            push_input(AndroidInput::Commit(owned));
+            push_staged_input(AndroidInput::Commit(owned));
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();
@@ -397,13 +431,54 @@ pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeCommi
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeDeleteSurrounding(
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeStageDeleteSurrounding(
     _env: EnvUnowned<'_>,
     _obj: JObject<'_>,
     before: jint,
     after: jint,
 ) {
-    push_input(AndroidInput::DeleteSurrounding { before: before.max(0), after: after.max(0) });
+    push_staged_input(AndroidInput::DeleteSurrounding { before: before.max(0), after: after.max(0) });
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeStageSetSelectionRelative(
+    _env: EnvUnowned<'_>,
+    _obj: JObject<'_>,
+    delta_anchor_cp: jint,
+    delta_focus_cp: jint,
+) {
+    push_staged_input(AndroidInput::SetSelectionRelative { delta_anchor_cp, delta_focus_cp });
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeStageKey(
+    _env: EnvUnowned<'_>,
+    _obj: JObject<'_>,
+    keycode: jint,
+    pressed: jint,
+) {
+    if let Some(key) = AndroidKey::from_keycode(keycode) {
+        push_staged_input(AndroidInput::Key { key, pressed: pressed != 0 });
+    }
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_one_lmk_wordcraft_WordCraftActivity_nativeOnImeBatchCommit(_env: EnvUnowned<'_>, _obj: JObject<'_>, seq: jlong) {
+    let seq_u64 = u64::try_from(seq.max(0)).unwrap_or(0);
+    if let Ok(mut q) = QUEUES.lock() {
+        let staged = std::mem::take(&mut q.staged_inputs);
+        for item in staged {
+            if q.inputs.len() >= MAX_QUEUED_INPUTS {
+                break;
+            }
+            q.inputs.push(QueuedInput { item, seq: seq_u64 });
+        }
+        q.latest_seq = q.latest_seq.max(seq_u64);
+    }
+    wake_ui();
 }
 
 #[allow(unsafe_code)]

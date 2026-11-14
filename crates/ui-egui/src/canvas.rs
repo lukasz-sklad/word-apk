@@ -751,7 +751,11 @@ fn configure_scroll_area(app: &mut WordApp, ui: &Ui, view: &CanvasView, motion: 
         .auto_shrink([false, false])
         // Bringing the caret into view glides there, or jumps with animation effects off.
         .animated(view.animate)
-        .scroll_source(egui::scroll_area::ScrollSource { mouse_wheel: false, ..Default::default() });
+        .scroll_source(egui::scroll_area::ScrollSource {
+            mouse_wheel: false,
+            drag: if cfg!(target_os = "android") { egui::scroll_area::DragScroll::Never } else { egui::scroll_area::DragScroll::default() },
+            ..Default::default()
+        });
     if app.session.view.read_mode {
         scroll_area = scroll_area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
     }
