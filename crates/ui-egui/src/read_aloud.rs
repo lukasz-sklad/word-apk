@@ -13,10 +13,10 @@ use crate::WordApp;
 use crate::theme::Tokens;
 
 /// Per-frame bookkeeping: follow the spoken sentence with the caret, report errors, and keep
-/// frames coming while reading.
+/// frames coming while reading (including when the player window is temporarily hidden).
 pub fn poll(app: &mut WordApp, ctx: &egui::Context) {
     let ra = &app.session.read_aloud;
-    if !ra.open {
+    if !ra.open && ra.state() == State::Stopped {
         app.read_aloud_at = None;
         return;
     }
@@ -57,10 +57,11 @@ fn error_notice(shown: &mut Option<String>, now: Option<String>) -> Option<Strin
 
 /// The page rectangles (in page units) of the sentence being read, to highlight.
 pub fn highlight(app: &mut WordApp) -> Option<(wordcraft_engine::doc::Pos, wordcraft_engine::doc::Pos)> {
-    if !app.session.read_aloud.open || !reads_shown_document(app) {
+    let ra = &app.session.read_aloud;
+    if (!ra.open && ra.state() == State::Stopped) || !reads_shown_document(app) {
         return None;
     }
-    let u = app.session.read_aloud.current()?;
+    let u = ra.current()?;
     Some((app.session.doc.clamp(&u.start), app.session.doc.clamp(&u.end)))
 }
 
@@ -86,15 +87,22 @@ pub fn show(app: &mut WordApp, ctx: &egui::Context) {
     let state = app.session.read_aloud.state();
     let (index, count) = app.session.read_aloud.progress();
     let mut run: Option<(&str, serde_json::Value)> = None;
-    let right_top = app.canvas.canvas_rect.map_or(ctx.content_rect().right_top() + vec2(-24.0, 160.0), |r| r.right_top() + vec2(-24.0, 16.0));
+    let constrain_rect =
+        app.canvas.canvas_rect.filter(|r| r.is_positive() && r.width() >= 120.0 && r.height() >= 80.0).unwrap_or_else(|| ctx.content_rect());
+    let right_top = constrain_rect.right_top() + vec2(-16.0, 16.0);
+    let player_width = (constrain_rect.width() - 16.0).clamp(140.0, 236.0);
     let window = egui::Window::new(tl!("Read Aloud"))
         .id(egui::Id::unique("read-aloud-player"))
         .collapsible(false)
         .resizable(false)
+        .default_width(player_width + 16.0)
+        .drag_area(egui::WindowDrag::Anywhere)
+        .constrain_to(constrain_rect)
         .pivot(egui::Align2::RIGHT_TOP)
         .default_pos(right_top);
     let shown = crate::window_close::window(ctx, window).show(ctx, |ui| {
-        ui.set_width(236.0);
+        ui.set_width(player_width);
+        ui.set_max_width(player_width);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if button(ui, &t, "mediaPrev", tl!("Previous sentence"), count > 0 && index > 0) {
@@ -188,6 +196,37 @@ fn button(ui: &mut Ui, t: &Tokens, icon: &str, tip: &str, enabled: bool) -> bool
 #[cfg(test)]
 mod tests {
     use super::error_notice;
+    use crate::WordApp;
+    use egui::{Event, Modifiers, PointerButton, pos2, vec2};
+    use wordcraft_engine::speech::{Backend, State};
+
+    fn harness(app: WordApp) -> egui_kittest::Harness<'static, WordApp> {
+        egui_kittest::Harness::builder().with_size(vec2(412.0, 860.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        )
+    }
+
+    fn drag_pointer(h: &mut egui_kittest::Harness<'_, WordApp>, from: egui::Pos2, delta: egui::Vec2) {
+        let mid = from + delta * 0.5;
+        let to = from + delta;
+        h.event(Event::PointerMoved(from));
+        h.step();
+        h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.step();
+        h.event(Event::PointerMoved(mid));
+        h.step();
+        h.event(Event::PointerMoved(to));
+        h.step();
+        h.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        for _ in 0..3 {
+            h.step();
+        }
+    }
 
     #[test]
     fn the_same_error_after_play_is_shown_again() {
@@ -198,5 +237,55 @@ mod tests {
         // Play clears the error; the same halt later is a new notice.
         assert_eq!(error_notice(&mut shown, None), None);
         assert_eq!(error_notice(&mut shown, halt()), halt());
+    }
+
+    #[test]
+    fn player_window_moves_when_dragged_by_frame_and_keeps_slider_interactive() {
+        let mut app = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), crate::Services::default());
+        app.session.read_aloud.backend = Backend::Hold;
+        app.session.read_aloud.open = true;
+        let mut h = harness(app);
+        for _ in 0..4 {
+            h.step();
+        }
+
+        let id = egui::Id::unique("read-aloud-player");
+        let before = h.ctx.memory(|m| m.area_rect(id)).expect("player window open");
+
+        // Grab near the left/bottom frame margin (not the title bar) and drag.
+        let frame_grab = pos2(before.left() + 4.0, before.bottom() - 28.0);
+        drag_pointer(&mut h, frame_grab, vec2(-90.0, 120.0));
+        let after_frame_drag = h.ctx.memory(|m| m.area_rect(id)).expect("player still open");
+        assert!(after_frame_drag.min.x < before.min.x - 40.0, "expected left move: {before:?} -> {after_frame_drag:?}");
+        assert!(after_frame_drag.min.y > before.min.y + 60.0, "expected down move: {before:?} -> {after_frame_drag:?}");
+
+        // Dragging the Speed slider changes rate without dragging the window away.
+        let rate_before = h.state().session.read_aloud.rate();
+        let slider_grab = pos2(after_frame_drag.center().x, after_frame_drag.top() + 86.0);
+        drag_pointer(&mut h, slider_grab, vec2(45.0, 0.0));
+        assert!(h.state().session.read_aloud.rate() > rate_before, "expected slider to adjust reading rate");
+        let after_slider = h.ctx.memory(|m| m.area_rect(id)).expect("player open after slider drag");
+        // Verify window's right/top pivot stayed stationary (not dragged by +45 dp), allowing tiny auto-fit width growth for "3.00×".
+        assert!(
+            (after_slider.right() - after_frame_drag.right()).abs() < 3.0 && (after_slider.top() - after_frame_drag.top()).abs() < 1.0,
+            "slider drag must not move window: after_frame_drag={after_frame_drag:?}, after_slider={after_slider:?}",
+        );
+    }
+
+    #[test]
+    fn poll_and_highlight_keep_working_while_window_is_hidden() {
+        let mut app = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), crate::Services::default());
+        app.session.read_aloud.backend = Backend::Hold;
+        let _ = app.execute("text.insert", serde_json::json!({ "text": "Pierwsze zdanie. Drugie zdanie." }));
+        let _ = app.execute("cursor.move", serde_json::json!({ "target": "start" }));
+        let _ = app.execute("review.readAloud", serde_json::json!({}));
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+
+        app.session.read_aloud.open = false;
+        assert!(super::highlight(&mut app).is_some(), "hidden player still highlights spoken sentence");
+
+        let mut h = harness(app);
+        h.step();
+        assert!(h.state().read_aloud_at.is_some(), "poll continues tracking spoken sentence while hidden");
     }
 }

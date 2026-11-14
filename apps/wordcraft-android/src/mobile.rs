@@ -431,6 +431,19 @@ impl TouchGestureFilter {
     /// When `modal_open` is true or a touch starts outside `canvas_viewport`, events pass through
     /// untouched so menus, toolbars, dialogs, and scrollbars respond directly.
     pub fn process(&mut self, events: &mut Vec<Event>, canvas_viewport: Option<Rect>, select_mode: bool, modal_open: bool) -> TouchOutcome {
+        self.process_with_overlays(events, canvas_viewport, &[], select_mode, modal_open)
+    }
+
+    /// Rewrites `events` while treating touches that begin inside `excluded_rects` (such as floating
+    /// tool windows like Read Aloud) as UI interactions rather than canvas scrolls/taps.
+    pub fn process_with_overlays(
+        &mut self,
+        events: &mut Vec<Event>,
+        canvas_viewport: Option<Rect>,
+        excluded_rects: &[Rect],
+        select_mode: bool,
+        modal_open: bool,
+    ) -> TouchOutcome {
         let mut outcome = TouchOutcome::default();
         if modal_open {
             self.active_touches.clear();
@@ -441,31 +454,44 @@ impl TouchGestureFilter {
         let original = std::mem::take(events);
         events.reserve(original.len() + 4);
         for ev in original {
-            self.handle_event(ev, canvas_viewport, select_mode, events, &mut outcome);
+            self.handle_event(ev, canvas_viewport, excluded_rects, select_mode, events, &mut outcome);
         }
         outcome
     }
 
-    fn handle_event(&mut self, ev: Event, canvas_viewport: Option<Rect>, select_mode: bool, out: &mut Vec<Event>, outcome: &mut TouchOutcome) {
+    fn handle_event(
+        &mut self,
+        ev: Event,
+        canvas_viewport: Option<Rect>,
+        excluded_rects: &[Rect],
+        select_mode: bool,
+        out: &mut Vec<Event>,
+        outcome: &mut TouchOutcome,
+    ) {
         if let Event::Touch { id, phase, pos, .. } = ev {
             if matches!(phase, TouchPhase::Start) {
                 self.drop_trailing_pointer = false;
             }
-            self.set_touch(id, pos, phase);
-            let any_in_canvas = canvas_viewport.is_some_and(|r| self.active_touches.iter().any(|(_, p)| r.contains(*p)));
-            if self.active_touches.len() >= 2 && any_in_canvas && !matches!(self.phase, GesturePhase::Pinch { .. }) {
+            let in_canvas = point_in_canvas(pos, canvas_viewport, excluded_rects);
+            let tracked = matches!(phase, TouchPhase::Start) && in_canvas || self.active_touches.iter().any(|(tid, _)| *tid == id);
+            if tracked {
+                self.set_touch(id, pos, phase);
+            }
+            if tracked && self.active_touches.len() >= 2 && !matches!(self.phase, GesturePhase::Pinch { .. }) {
                 self.enter_pinch(out);
             }
-            match phase {
-                TouchPhase::Start => self.on_touch_start(id, pos, canvas_viewport, select_mode),
-                TouchPhase::Move => self.on_touch_move(id, pos, out),
-                TouchPhase::End => self.on_touch_end(id, pos, out, outcome),
-                TouchPhase::Cancel => self.on_touch_cancel(id, out),
+            if tracked {
+                match phase {
+                    TouchPhase::Start => self.on_touch_start(id, pos, in_canvas, select_mode),
+                    TouchPhase::Move => self.on_touch_move(id, pos, out),
+                    TouchPhase::End => self.on_touch_end(id, pos, out, outcome),
+                    TouchPhase::Cancel => self.on_touch_cancel(id, out),
+                }
             }
             // During active Pinch we emit explicit bounded Event::Zoom + PointerMoved(centroid)
             // directly, avoiding egui::TouchState's unguarded avg_distance division when fingers
             // start close together or when PointerGone clears pointer_pos.
-            if !matches!(self.phase, GesturePhase::Pinch { .. }) {
+            if !tracked || !matches!(self.phase, GesturePhase::Pinch { .. }) {
                 out.push(ev);
             }
             return;
@@ -506,8 +532,7 @@ impl TouchGestureFilter {
         }
     }
 
-    fn on_touch_start(&mut self, id: TouchId, pos: Pos2, canvas_viewport: Option<Rect>, select_mode: bool) {
-        let in_canvas = canvas_viewport.is_some_and(|r| r.contains(pos));
+    fn on_touch_start(&mut self, id: TouchId, pos: Pos2, in_canvas: bool, select_mode: bool) {
         if matches!(self.phase, GesturePhase::Pinch { .. }) {
             if let Some((center, radius)) = self.pinch_geometry() {
                 self.phase = GesturePhase::Pinch { center, span: (radius >= MIN_PINCH_RADIUS_DP).then_some(radius) };
@@ -612,6 +637,10 @@ impl TouchGestureFilter {
     }
 }
 
+fn point_in_canvas(pos: Pos2, canvas_viewport: Option<Rect>, excluded_rects: &[Rect]) -> bool {
+    canvas_viewport.is_some_and(|r| r.contains(pos)) && !excluded_rects.iter().any(|ex| ex.contains(pos))
+}
+
 fn emit_wheel(out: &mut Vec<Event>, delta: Vec2, phase: TouchPhase) {
     out.push(Event::MouseWheel { unit: MouseWheelUnit::Point, delta, phase, modifiers: Modifiers::NONE, source: MouseWheelSource::Unknown });
 }
@@ -634,6 +663,8 @@ pub struct MobileStrings {
     pub page_view: &'static str,
     pub web_view: &'static str,
     pub read_aloud: &'static str,
+    pub read_aloud_show: &'static str,
+    pub read_aloud_hide: &'static str,
     pub ribbon: &'static str,
     pub lock_keyboard: &'static str,
     pub theme_system: &'static str,
@@ -661,6 +692,8 @@ const EN_STRINGS: MobileStrings = MobileStrings {
     page_view: "Page",
     web_view: "Web",
     read_aloud: "Read",
+    read_aloud_show: "Show Read Aloud window",
+    read_aloud_hide: "Hide Read Aloud window",
     ribbon: "Rib",
     lock_keyboard: "Lock",
     theme_system: "Sys",
@@ -688,6 +721,8 @@ const PL_STRINGS: MobileStrings = MobileStrings {
     page_view: "Dok",
     web_view: "Web",
     read_aloud: "Czytaj",
+    read_aloud_show: "Pokaż okienko Czytaj na głos",
+    read_aloud_hide: "Ukryj okienko Czytaj na głos",
     ribbon: "Wst",
     lock_keyboard: "Blok",
     theme_system: "Sys",
@@ -824,7 +859,6 @@ impl CzytajController {
         let sel_pair = app.session.sel.ordered();
         let same_paused_sel = self.paused_selection.as_ref() == Some(&(doc_id, sel_pair.0.clone(), sel_pair.1.clone()));
         if same_doc && state == wordcraft_engine::speech::State::Paused && (!has_sel || same_paused_sel) {
-            app.session.read_aloud.open = true;
             let _ = app.execute("readAloud.playPause", json!({}));
             return;
         }
@@ -850,6 +884,12 @@ impl CzytajController {
         app.session.read_aloud.document = Some(doc_id);
         app.session.read_aloud.start(queue);
     }
+}
+
+/// Shows or hides the floating Read Aloud player window without stopping active speech.
+pub fn toggle_read_aloud_window(app: &mut WordApp) -> bool {
+    app.session.read_aloud.open = !app.session.read_aloud.open;
+    app.session.read_aloud.open
 }
 
 /// Returns true when Read Aloud is actively speaking the currently visible document.
@@ -1295,5 +1335,78 @@ mod tests {
         ];
         filter.process(&mut pinch, vp, true, false);
         assert!(pinch.iter().any(|e| matches!(e, Event::Zoom(_))));
+    }
+
+    #[test]
+    fn touch_filter_passes_overlay_window_drag_through_without_scrolling() {
+        let vp = Some(Rect::from_min_size(pos2(0.0, 50.0), vec2(400.0, 700.0)));
+        let overlay = [Rect::from_min_max(pos2(150.0, 100.0), pos2(390.0, 250.0))];
+        let mut filter = TouchGestureFilter::default();
+
+        // Drag starting inside the floating Read Aloud window must move the window, not scroll canvas,
+        // even as the finger moves outside the initial window rectangle.
+        let mut start =
+            vec![touch(1, TouchPhase::Start, pos2(160.0, 120.0)), Event::PointerMoved(pos2(160.0, 120.0)), press(pos2(160.0, 120.0), true)];
+        let o1 = filter.process_with_overlays(&mut start, vp, &overlay, false, false);
+        assert!(!o1.tapped_canvas);
+        assert!(start.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })));
+
+        let mut drag = vec![touch(1, TouchPhase::Move, pos2(60.0, 320.0)), Event::PointerMoved(pos2(60.0, 320.0))];
+        let _ = filter.process_with_overlays(&mut drag, vp, &overlay, false, false);
+        assert!(!drag.iter().any(|e| matches!(e, Event::MouseWheel { .. })), "overlay drag must not scroll canvas");
+        assert!(drag.iter().any(|e| matches!(e, Event::PointerMoved(p) if *p == pos2(60.0, 320.0))));
+
+        let mut end = vec![touch(1, TouchPhase::End, pos2(60.0, 320.0)), press(pos2(60.0, 320.0), false), Event::PointerGone];
+        let o3 = filter.process_with_overlays(&mut end, vp, &overlay, false, false);
+        assert!(!o3.tapped_canvas);
+
+        // Quick tap inside overlay must not request the soft keyboard as a canvas tap.
+        let mut tap_start = vec![touch(2, TouchPhase::Start, pos2(200.0, 150.0)), press(pos2(200.0, 150.0), true)];
+        filter.process_with_overlays(&mut tap_start, vp, &overlay, false, false);
+        let mut tap_end = vec![touch(2, TouchPhase::End, pos2(201.0, 150.0)), press(pos2(201.0, 150.0), false)];
+        let tap_out = filter.process_with_overlays(&mut tap_end, vp, &overlay, false, false);
+        assert!(!tap_out.tapped_canvas);
+
+        // Dragging outside the overlay still pans the canvas normally.
+        let mut canvas_drag = vec![
+            touch(3, TouchPhase::Start, pos2(40.0, 400.0)),
+            press(pos2(40.0, 400.0), true),
+            touch(3, TouchPhase::Move, pos2(40.0, 330.0)),
+            touch(3, TouchPhase::End, pos2(40.0, 330.0)),
+        ];
+        filter.process_with_overlays(&mut canvas_drag, vp, &overlay, false, false);
+        assert!(canvas_drag.iter().any(|e| matches!(e, Event::MouseWheel { delta, .. } if delta.y < -50.0)));
+    }
+
+    #[test]
+    fn toggle_read_aloud_window_hides_and_restores_without_stopping_speech() {
+        use wordcraft_engine::speech::{Backend, State};
+
+        let mut app = test_app();
+        app.session.read_aloud.backend = Backend::Hold;
+        let _ = app.execute("text.insert", json!({ "text": "Pierwsze zdanie. Drugie zdanie." }));
+        let _ = app.execute("cursor.move", json!({ "target": "start" }));
+
+        let mut czytaj = CzytajController::default();
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+        assert!(app.session.read_aloud.open);
+
+        // Hide player window while speech stays playing.
+        assert!(!toggle_read_aloud_window(&mut app));
+        assert!(!app.session.read_aloud.open);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+
+        // Pausing and resuming via Czytaj keeps the window hidden until explicitly shown again.
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Paused);
+        assert!(!app.session.read_aloud.open);
+        czytaj.toggle(&mut app);
+        assert_eq!(app.session.read_aloud.state(), State::Playing);
+        assert!(!app.session.read_aloud.open);
+
+        // Toggle back visible.
+        assert!(toggle_read_aloud_window(&mut app));
+        assert!(app.session.read_aloud.open);
     }
 }

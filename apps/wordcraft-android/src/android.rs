@@ -14,7 +14,7 @@ use android_activity::AndroidApp;
 use eframe::NativeOptions;
 use eframe::egui_wgpu::WgpuSetup;
 use eframe::wgpu::{Backends, DeviceDescriptor};
-use egui::{Color32, OutputCommand, RichText, Ui};
+use egui::{Color32, OutputCommand, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, epaint::Mesh, pos2, vec2};
 use jni::objects::{JObject, JString, JValue};
 use jni::refs::Global;
 use jni::sys::jint;
@@ -29,7 +29,7 @@ use crate::ime;
 use crate::mobile::{
     self, AndroidThemeMode, CzytajController, MobileStrings, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults,
     apply_initial_viewport_zoom, czytaj_is_playing, document_pan_rect, effective_ime_wanted, hover_to_egui_event, mobile_strings, prefs_write_atomic,
-    step_utf8_by_chars, to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
+    step_utf8_by_chars, to_egui_events, toggle_read_aloud_window, utf8_byte_to_utf16_offset, wheel_to_egui_event,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -411,6 +411,17 @@ impl AndroidShell {
         }
     }
 
+    fn floating_overlay_rects(&self, ctx: &egui::Context) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        if self.app.session.read_aloud.open
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique("read-aloud-player")))
+        {
+            // Expand slightly so grabbing right on the outer border frame never scrolls the canvas.
+            rects.push(rect.expand(10.0));
+        }
+        rects
+    }
+
     fn modal_blocking_canvas(&self, ctx: &egui::Context) -> bool {
         self.app.dialog.is_some() || self.app.colors.is_some() || self.app.file_dialog_open() || self.app.ui.backstage || ctx.any_popup_open()
     }
@@ -452,7 +463,7 @@ impl AndroidShell {
                     self.draw_narrow_bar_row(
                         ui,
                         "android_bar_row1",
-                        168.0,
+                        132.0,
                         |shell, ui| shell.draw_doc_buttons(ui, s, compact),
                         |shell, ui| shell.draw_theme_and_zoom_rtl(ui, s, compact),
                         |shell, ui| shell.draw_zoom_and_theme_ltr(ui, s, compact),
@@ -538,6 +549,11 @@ impl AndroidShell {
         if toolbar_pill(ui, s.read_aloud, czytaj_is_playing(&self.app), compact).clicked() {
             self.czytaj.toggle(&mut self.app);
         }
+        let ra_open = self.app.session.read_aloud.open;
+        let ra_active = self.app.session.read_aloud.state() != wordcraft_engine::speech::State::Stopped;
+        if read_aloud_window_button(ui, ra_open, ra_active, s, compact).clicked() {
+            toggle_read_aloud_window(&mut self.app);
+        }
         let ribbon_open = !self.app.ui.ribbon_collapsed && !self.app.ui.hide_ribbon_strip;
         if toolbar_pill(ui, s.ribbon, ribbon_open, compact).clicked() {
             let compact_landscape_ime = self.insets.ime_visible && ui.ctx().content_rect().height() < 520.0;
@@ -563,7 +579,7 @@ impl AndroidShell {
     }
 
     fn draw_theme_and_zoom_rtl(&mut self, ui: &mut Ui, s: MobileStrings, compact: bool) {
-        if toolbar_pill(ui, self.theme_mode.short_label_for(&s), self.theme_mode != AndroidThemeMode::System, compact).clicked() {
+        if theme_mode_button(ui, self.theme_mode, s, compact).clicked() {
             self.theme_mode = self.theme_mode.cycle_next();
             self.theme_mode.apply(&mut self.app);
             save_theme_mode(&self.files_dir, self.theme_mode);
@@ -597,7 +613,7 @@ impl AndroidShell {
             let next = (pct + 15.0).clamp(25.0, 400.0);
             let _ = self.app.execute("view.zoom", json!({ "value": next }));
         }
-        if toolbar_pill(ui, self.theme_mode.short_label_for(&s), self.theme_mode != AndroidThemeMode::System, compact).clicked() {
+        if theme_mode_button(ui, self.theme_mode, s, compact).clicked() {
             self.theme_mode = self.theme_mode.cycle_next();
             self.theme_mode.apply(&mut self.app);
             save_theme_mode(&self.files_dir, self.theme_mode);
@@ -697,8 +713,9 @@ impl eframe::App for AndroidShell {
 
         let modal = self.modal_blocking_canvas(ctx);
         let pan_rect = document_pan_rect(self.app.canvas.viewport, self.app.canvas.canvas_rect);
+        let overlays = self.floating_overlay_rects(ctx);
         let allow_pointer_select = self.select_mode || ime::pointer_is_mouse();
-        let outcome = self.touch_filter.process(&mut raw.events, pan_rect, allow_pointer_select, modal);
+        let outcome = self.touch_filter.process_with_overlays(&mut raw.events, pan_rect, &overlays, allow_pointer_select, modal);
         if outcome.tapped_canvas {
             let now = ctx.input(|i| i.time);
             self.set_ime_wanted(true, now);
@@ -795,6 +812,142 @@ fn toolbar_pill_enabled(ui: &mut Ui, label: &str, active: bool, enabled: bool, c
     let min_w = if compact { 24.0 } else { 28.0 };
     let btn = egui::Button::new(RichText::new(label).size(size).color(text_col)).fill(fill).min_size(egui::vec2(min_w, 26.0));
     ui.add_enabled(enabled, btn)
+}
+
+fn allocate_icon_pill(ui: &mut Ui, size: egui::Vec2, active: bool, label: &str) -> (Rect, egui::Response, theme::Tokens) {
+    let t = theme::Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let resp = resp.on_hover_text(label);
+    let fill = if resp.is_pointer_button_down_on() {
+        t.pressed
+    } else if resp.hovered() {
+        t.hover
+    } else if active {
+        t.checked
+    } else {
+        Color32::TRANSPARENT
+    };
+    if fill != Color32::TRANSPARENT {
+        ui.painter().rect_filled(rect, 4.0, fill);
+    }
+    (rect, resp, t)
+}
+
+/// Fixed-size 4-state vector theme button (System / Light / Sepia / Dark) drawn purely with `Painter`
+/// shapes so it keeps a constant width/position and renders reliably on every Android font stack.
+fn theme_mode_button(ui: &mut Ui, mode: AndroidThemeMode, s: MobileStrings, compact: bool) -> egui::Response {
+    let label = mode.short_label_for(&s);
+    let size = vec2(if compact { 26.0 } else { 28.0 }, 26.0);
+    let (rect, resp, t) = allocate_icon_pill(ui, size, mode != AndroidThemeMode::System, label);
+    if ui.is_rect_visible(rect) {
+        paint_theme_mode_icon(ui.painter(), rect, mode, &t);
+    }
+    resp
+}
+
+fn paint_theme_mode_icon(painter: &egui::Painter, rect: Rect, mode: AndroidThemeMode, t: &theme::Tokens) {
+    let c = rect.center();
+    match mode {
+        AndroidThemeMode::System => {
+            const STEPS: usize = 12;
+            let r = 6.0_f32;
+            let mut left = Vec::with_capacity(STEPS + 1);
+            let mut right = Vec::with_capacity(STEPS + 1);
+            for i in 0..=STEPS {
+                let frac = i as f32 / STEPS as f32;
+                let a_l = std::f32::consts::FRAC_PI_2 + frac * std::f32::consts::PI;
+                let a_r = -std::f32::consts::FRAC_PI_2 + frac * std::f32::consts::PI;
+                left.push(pos2(c.x + a_l.cos() * r, c.y + a_l.sin() * r));
+                right.push(pos2(c.x + a_r.cos() * r, c.y + a_r.sin() * r));
+            }
+            painter.add(Shape::convex_polygon(left, Color32::from_rgb(0xF4, 0xF4, 0xF6), Stroke::NONE));
+            painter.add(Shape::convex_polygon(right, Color32::from_rgb(0x23, 0x26, 0x2E), Stroke::NONE));
+            painter.circle_stroke(c, r, Stroke::new(1.3, t.icon));
+            painter.line_segment([pos2(c.x, c.y - r), pos2(c.x, c.y + r)], Stroke::new(1.1, t.icon));
+        }
+        AndroidThemeMode::Light => {
+            let sun = if t.dark { Color32::from_rgb(0xFB, 0xBF, 0x24) } else { Color32::from_rgb(0xD9, 0x77, 0x06) };
+            painter.circle_filled(c, 3.1, sun);
+            for i in 0..8 {
+                let a = (i as f32) * std::f32::consts::FRAC_PI_4;
+                let dir = vec2(a.cos(), a.sin());
+                painter.line_segment([c + dir * 4.7, c + dir * 7.2], Stroke::new(1.5, sun));
+            }
+        }
+        AndroidThemeMode::Sepia => {
+            let page = Rect::from_center_size(c, vec2(11.0, 13.0));
+            let cream = Color32::from_rgb(0xF0, 0xDF, 0xC2);
+            let brown = Color32::from_rgb(0x6E, 0x47, 0x26);
+            painter.rect_filled(page, 2.0, cream);
+            painter.rect_stroke(page, 2.0, Stroke::new(1.3, brown), egui::StrokeKind::Middle);
+            painter.line_segment([pos2(c.x - 3.0, c.y - 2.2), pos2(c.x + 3.0, c.y - 2.2)], Stroke::new(1.2, brown));
+            painter.line_segment([pos2(c.x - 3.0, c.y + 1.4), pos2(c.x + 2.2, c.y + 1.4)], Stroke::new(1.2, brown));
+        }
+        AndroidThemeMode::Dark => {
+            let moon = if t.dark { Color32::from_rgb(0xE2, 0xE8, 0xF0) } else { Color32::from_rgb(0x33, 0x41, 0x55) };
+            paint_crescent_moon(painter, c + vec2(-0.5, 0.0), 6.5, moon);
+            let star = c + vec2(3.8, -2.8);
+            painter.line_segment([star - vec2(1.7, 0.0), star + vec2(1.7, 0.0)], Stroke::new(1.1, moon));
+            painter.line_segment([star - vec2(0.0, 1.7), star + vec2(0.0, 1.7)], Stroke::new(1.1, moon));
+        }
+    }
+}
+
+fn paint_crescent_moon(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
+    const SEGMENTS: usize = 14;
+    let angle = -0.52_f32;
+    let (sin_a, cos_a) = angle.sin_cos();
+    let rotate = |x: f32, y: f32| pos2(center.x + x * cos_a - y * sin_a, center.y + x * sin_a + y * cos_a);
+    let mut mesh = Mesh::default();
+    for i in 0..=SEGMENTS {
+        let theta = -std::f32::consts::FRAC_PI_2 + (i as f32 / SEGMENTS as f32) * std::f32::consts::PI;
+        let cy = theta.sin() * radius;
+        let outer_x = -theta.cos() * radius;
+        let inner_x = -theta.cos() * (radius * 0.28);
+        mesh.colored_vertex(rotate(outer_x, cy), color);
+        mesh.colored_vertex(rotate(inner_x, cy), color);
+    }
+    for i in 0..SEGMENTS {
+        let base = (i * 2) as u32;
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base + 1, base + 3, base + 2);
+    }
+    painter.add(Shape::mesh(Arc::new(mesh)));
+}
+
+/// Compact Eye visibility toggle button that hides or restores the Read Aloud window while keeping
+/// audio playback running.
+fn read_aloud_window_button(ui: &mut Ui, open: bool, active: bool, s: MobileStrings, compact: bool) -> egui::Response {
+    let label = if open { s.read_aloud_hide } else { s.read_aloud_show };
+    let size = vec2(if compact { 24.0 } else { 26.0 }, 26.0);
+    let (rect, resp, t) = allocate_icon_pill(ui, size, open, label);
+    if ui.is_rect_visible(rect) {
+        let c = rect.center();
+        let stroke_col = if open { t.text } else { t.text_dim };
+        let iris_col = if active { t.accent } else { stroke_col };
+        const ARCH: usize = 8;
+        let w = 6.5_f32;
+        let h = 3.7_f32;
+        let mut top = Vec::with_capacity(ARCH + 1);
+        let mut bot = Vec::with_capacity(ARCH + 1);
+        for i in 0..=ARCH {
+            let f = i as f32 / ARCH as f32;
+            let x = -w + 2.0 * w * f;
+            let lift = (f * std::f32::consts::PI).sin() * h;
+            top.push(pos2(c.x + x, c.y - lift));
+            bot.push(pos2(c.x + x, c.y + lift));
+        }
+        let p = ui.painter();
+        p.add(Shape::line(top, Stroke::new(1.3, stroke_col)));
+        p.add(Shape::line(bot, Stroke::new(1.3, stroke_col)));
+        p.circle_stroke(c, 2.3, Stroke::new(1.2, iris_col));
+        p.circle_filled(c, 1.0, iris_col);
+        if !open {
+            p.line_segment([pos2(c.x - 5.5, c.y + 4.5), pos2(c.x + 5.5, c.y - 4.5)], Stroke::new(1.4, stroke_col));
+        }
+    }
+    resp
 }
 
 fn build_services(bridge: &ActivityBridge, saf: &Arc<Mutex<SafState>>) -> Services {
