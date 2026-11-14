@@ -45,6 +45,9 @@ zbus = "=5.19.0"
 # Comment times in the user's own time zone (`local_time.rs`); the web app asks the browser.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+
+# In-app self-updater is desktop-only; Android releases are distributed offline (F-Droid / APK).
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 craft-update = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

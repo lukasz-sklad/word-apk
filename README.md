@@ -1,60 +1,46 @@
 <p align="center">
-  <a href="https://getartcraft.com/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/artcraft-logo-white.svg">
-      <img alt="ArtCraft" src="docs/brand/artcraft-logo.svg" width="200">
-    </picture>
-  </a>
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.wordcraft.png" width="128" height="128" alt="WordCraft Android icon: a document page and pen on a blue tile">
+</p>
+
+<h1 align="center">WordCraft Android (nieoficjalny fork / unofficial fork)</h1>
+
+<p align="center">
+  <b>Nieoficjalny fork Androidowy edytora tekstu WordCraft (<a href="https://github.com/storytold/wordcraft">storytold/wordcraft</a>), napisany w czystym Ruście i Kotlinie.</b><br>
+  <b>Unofficial Android fork based on WordCraft, an open-source word processor written in pure Rust.</b>
 </p>
 
 <p align="center">
-  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.wordcraft.png" width="128" height="128" alt="WordCraft icon: a document page and pen on a blue tile">
-</p>
-
-<h1 align="center">WordCraft</h1>
-
-<p align="center">
-  <b>Writing and document design; an open-source, modern word processor, built in pure Rust.</b>
-</p>
-
-<p align="center">
-  A fast, open-source word processor with a familiar workflow: the ribbon, styles,
-  tables, track changes, references and mail merge. It reads and writes .docx, runs natively on
-  macOS, Windows, Linux and BSD, and in the browser via WebAssembly.<br>
-  <i>By the ArtCraft team.</i>
-</p>
-
-<p align="center">
-  <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-2b47b5?style=flat-square&logo=rust&logoColor=white">
-  <img alt="Runs on macOS, Windows, Linux, BSD and the web" src="https://img.shields.io/badge/runs%20on-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20BSD%20%C2%B7%20Web-3b5bdb?style=flat-square">
+  <img alt="Written in Rust and Kotlin" src="https://img.shields.io/badge/written%20in-Rust%20%2B%20Kotlin-2b47b5?style=flat-square&logo=rust&logoColor=white">
+  <img alt="Platform: Android" src="https://img.shields.io/badge/platform-Android%208.0%2B%20(arm64%20%C2%B7%20x86__64)-3b5bdb?style=flat-square&logo=android&logoColor=white">
+  <img alt="Offline: No INTERNET permission" src="https://img.shields.io/badge/network-100%25%20offline%20(no%20INTERNET)-2e7d32?style=flat-square">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-2b47b5?style=flat-square">
-  <img alt="Agent-drivable over MCP" src="https://img.shields.io/badge/agents-MCP%20%C2%B7%20CLI-3b5bdb?style=flat-square">
-  <br>
-  <a href="https://sonarcloud.io/project/overview?id=storytold_wordcraft"><img alt="Scanned by SonarCloud" src="https://img.shields.io/badge/Scanned_by-SonarCloud-4b9fd5?style=flat-square&logo=sonarqubecloud&logoColor=white"></a>
-  <a href="https://coderabbit.ai"><img alt="Reviewed by CodeRabbit" src="https://img.shields.io/coderabbit/prs/github/storytold/wordcraft?style=flat-square&label=Reviewed%20by%20CodeRabbit&logo=coderabbit"></a>
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/artcraft"><img alt="Join the ArtCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
-</p>
-
-<p align="center">
-  <a href="https://getartcraft.com/apps/wordcraft"><b>WordCraft on getartcraft.com</b></a> ·
-  <a href="https://getartcraft.com/">ArtCraft</a> ·
-  <a href="https://getartcraft.com/apps">All Crafting Apps</a>
-</p>
-
-<br>
-
-<p align="center">
-  <img src="docs/images/hero.png" alt="WordCraft with the Home tab of the ribbon open over a two-page document titled The Open Studio Handbook. The Navigation pane on the left lists the document's headings, the Styles gallery shows live previews of Normal, Heading 1, Title and Subtitle, and a word in the first paragraph is selected." width="100%">
-  <br><sub><b>The Open Studio Handbook</b>, WordCraft's built-in sample: the ribbon, live Styles gallery, rulers and the Navigation pane.</sub>
 </p>
 
 > [!NOTE]
-> **ArtCraft is a community of artists from all walks of life.** Painters, photographers,
-> filmmakers, illustrators, designers, animators, hobbyists, and people who picked up a pencil
-> last week. If you make things, you're one of us. **[Come say hi on Discord](https://discord.gg/artcraft).**
+> **Informacja o forku / Fork notice:** To repozytorium (`lukasz-sklad/word-apk`) jest **nieoficjalnym, społecznościowym forkiem** projektu [WordCraft](https://github.com/storytold/wordcraft) przygotowanym pod system **Android** (z dostosowanym interfejsem dotykowym **EN / PL**, obsługą klawiatury Gboard / IME, wcięć ekranu oraz wbudowanym offline’owym słownikiem polskim i angielskim). Projekt nie jest oficjalnym produktem zespołu ArtCraft — niewolne znaki towarowe `docs/brand/` zostały usunięte zgodnie z warunkami licencyjnymi projektu źródłowego.
+
+> [!IMPORTANT]
+> **Prywatność i gotowość pod F-Droid:** Wersja Androidowa działa **w 100% offline** — w pliku [`AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) usunięto uprawnienie `INTERNET`, brak w niej Google Play Services, telemetrii, reklam oraz mechanizmów samoczynnego pobierania aktualizacji w aplikacji (`craft-update` wyłączony dla `target_os = "android"`). Aktualizacje są dostarczane przez wydania APK / repozytorium F-Droid.
+
+## Funkcje i budowanie wersji Android
+
+* **Formaty plików:** otwiera i zapisuje `.docx` (OOXML), `.odt`, `.rtf`, `.html`, `.md`, `.txt`, a także otwiera starsze `.doc` (97–2003) oraz eksportuje PDF.
+* **Języki i pisownia offline:** spójny górny pasek w języku polskim (**PL**) i angielskim (**EN**), wbudowany polski słownik Hunspell (`pl_PL`) i reguły dzielenia wyrazów TeX.
+* **Dostosowanie pod Androida:** obsługa Gboard / IME z autokorektą, tryb zaznaczania tekstu jednym palcem (`Zazn`), powiększanie dwoma palcami, wykrywanie rzeczywistego zasłonięcia przez wycięcie aparatu / tryb okienkowy.
+* **Budowanie ze źródeł (NDK r27c, Rust >= 1.95, JDK 17):**
+  ```sh
+  cargo test -p wordcraft-android
+  RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384" \
+    cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --release -p wordcraft-android
+  cd android && ./gradlew testDebugUnitTest assembleRelease --no-daemon
+  ```
+
+---
+
+<p align="center">
+  <img src="docs/images/hero.png" alt="WordCraft with the Home tab of the ribbon open over a two-page document titled The Open Studio Handbook." width="100%">
+  <br><sub><b>WordCraft</b> — interfejs dokumentu i wstążki (desktop / silnik współdzielony z wersją Android).</sub>
+</p>
 
 <p align="center">
   <a href="#a-tour">A tour</a> ·
@@ -445,25 +431,18 @@ And [**ArtCraft**](https://getartcraft.com/) itself, our AI image and video stud
 
 ## License and credits
 
-WordCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Copyright (c) 2026 ArtCraft Team and the WordCraft contributors. Required notices are in [NOTICE](NOTICE).
+* **Code & Android fork (`lukasz-sklad/word-apk`):** Unofficial Android fork based on [WordCraft](https://github.com/storytold/wordcraft), Copyright (c) 2026 ArtCraft Team, WordCraft contributors, and fork contributors. Dual-licensed under **[MIT](LICENSE-MIT)** or **[Apache-2.0](LICENSE-APACHE)**, at your option. Required notices are in [NOTICE](NOTICE).
+* **Bundled assets & icons:** Open-source or original artwork only; every asset file, author, source, and license is recorded in [ATTRIBUTION.md](ATTRIBUTION.md). Non-open-source ArtCraft trademark files (`docs/brand/`) from upstream were removed in this fork.
+* **Bundled fonts:** `Inter`, `JetBrains Mono`, `Source Sans 3`, and `Source Serif 4` under **SIL Open Font License 1.1 (`OFL-1.1`)** (`assets/fonts/OFL-*.txt`).
+* **Bundled offline Polish dictionary & hyphenation (`android/app/src/main/assets/language-packs/pl/`):**
+  * Polish Hunspell spelling (`pl_PL` from SJP.PL / LibreOffice dictionaries): **Apache-2.0** (`LICENCES/Apache-2.0.txt`, `LICENCES/README_pl_PL.txt`).
+  * Polish TeX hyphenation patterns (Hanna Kołodziejska, Bogusław Jackowski, Marek Ryćko): **MIT** (`LICENCES/MIT.txt`).
+* **English proofing:** Public-domain Moby Hyphenator II list (Grady Ward) and SCOWL dictionaries (see [NOTICE](NOTICE)).
 
-Bundled fonts, icons, images and other assets keep their own open licenses; each one is listed
-with its author, source and license in [ATTRIBUTION.md](ATTRIBUTION.md).
+### Licencje (PL)
 
-The English spelling dictionary and hyphenation come from Grady Ward's public-domain Moby
-Hyphenator II word list. Polish spelling reads the Hunspell `pl_PL` dictionary installed on the system (not bundled), as
-do Russian, Portuguese, Czech, Italian, Croatian and Turkish spelling (how to install them:
-[docs/spelling-dictionaries.md](docs/spelling-dictionaries.md)), and
-Polish hyphenation the TeX patterns by Hanna Kołodziejska, Bogusław Jackowski and Marek Ryćko (MIT
-option). The sample documents and templates are original text written for WordCraft.
-
-The ArtCraft name, wordmark and logos in [`docs/brand/`](docs/brand/) are trademarks of the
-ArtCraft Team and are not covered by this license. They may be used only unmodified, and only as
-part of this repository and WordCraft, under [`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt).
-Forks and modified versions must remove them.
+Ten nieoficjalny fork Androidowy jest wydawany w całości na otwartych licencjach (kod Rusta i Kotlina: **`MIT OR Apache-2.0`**, dołączone fonty: **`OFL-1.1`**, wbudowany offline’owy słownik polski: **`Apache-2.0`** oraz wzorce dzielenia wyrazów: **`MIT`**). Wszystkie niewolne znaki towarowe ArtCraftu (`docs/brand/`) zostały usunięte z repozytorium.
 
 <p align="center">
-  <a href="https://getartcraft.com/"><img alt="ArtCraft" src="docs/brand/artcraft-mark.svg" width="28"></a><br>
-  <sub>Made by the <a href="https://getartcraft.com/">ArtCraft</a> team and community.</sub>
+  <sub>Unofficial Android fork based on <a href="https://github.com/storytold/wordcraft">WordCraft</a> — 100% FLOSS &amp; offline.</sub>
 </p>

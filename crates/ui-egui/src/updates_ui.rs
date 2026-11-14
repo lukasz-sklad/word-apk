@@ -2,44 +2,44 @@
 
 use crate::WordApp;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 use craft_update::dialog::{CheckResultDialog, CheckResultResponse};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 use craft_update::updater::{Action, Status, Updater};
 
 pub(crate) struct Runtime {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     updater: Updater,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     result_dialog: CheckResultDialog,
     /// The desktop app turns the check at start on; tests and the web build leave it off.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     startup_check: bool,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     check_requested: bool,
     /// The context of the last frame, to wake the UI when a check is queued from a menu callback.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     repaint: Option<egui::Context>,
     pub(crate) manual_window_open: bool,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
     pub(crate) status_message: Option<String>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
         Self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
             updater: Updater::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION")).with_translator(translate),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
             result_dialog: CheckResultDialog::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION")).with_translator(translate),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
             startup_check: false,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
             check_requested: false,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
             repaint: None,
             manual_window_open: false,
-            #[cfg(target_arch = "wasm32")]
+            #[cfg(any(target_arch = "wasm32", target_os = "android"))]
             status_message: None,
         }
     }
@@ -47,22 +47,26 @@ impl Default for Runtime {
 
 /// The update prompt's and the result window's words in the interface language: craft-update
 /// passes its English text and the values of its `{name}` placeholders each time it draws.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn translate(text: &str, args: &[(&str, &str)]) -> String {
     crate::i18n::fmt(crate::i18n::t(text), args)
 }
 
 impl WordApp {
     /// Whether the app asks for a newer release when it starts (off until the desktop app turns it on).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     pub fn set_startup_update_check(&mut self, on: bool) {
         self.updates_rt.startup_check = on;
     }
 
+    /// Updates are managed externally on mobile/web builds.
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+    pub fn set_startup_update_check(&mut self, _on: bool) {}
+
     /// Turns the self-update off for the rest of this process: no update is offered, and Help ▸
     /// Check for Updates says why. For a process that still carries another program's AppImage
     /// variables, which the update would take for this copy's file and replace (#5653).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     pub fn disable_self_update(&mut self) {
         let rt = &mut self.updates_rt;
         rt.startup_check = false;
@@ -72,7 +76,7 @@ impl WordApp {
     /// Starts the helper of an update that is ready, so that it installs once the process has
     /// ended. Call it once the exit is certain, before a path that ends the process without
     /// dropping the app. Later calls do nothing.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     pub fn start_pending_update(&mut self) {
         self.updates_rt.updater.start_pending_update();
     }
@@ -80,7 +84,7 @@ impl WordApp {
 
 /// A check for updates that never finds one and gives the reason as its error, which Help ▸ Check
 /// for Updates shows.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn refused_check() -> craft_update::updater::CheckSource {
     let why = tl!("Updates are off in this window: WordCraft was started with another program's AppImage settings. Start WordCraft from its own menu entry to update it.")
         .to_string();
@@ -88,7 +92,7 @@ fn refused_check() -> craft_update::updater::CheckSource {
 }
 
 pub(crate) fn check(app: &mut WordApp) {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     {
         app.updates_rt.check_requested = true;
         app.updates_rt.manual_window_open = true;
@@ -96,15 +100,22 @@ pub(crate) fn check(app: &mut WordApp) {
             ctx.request_repaint();
         }
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
     {
         app.updates_rt.manual_window_open = true;
-        app.updates_rt.status_message = Some(tl!("Update check is not supported in the web browser.").to_string());
+        #[cfg(target_arch = "wasm32")]
+        {
+            app.updates_rt.status_message = Some(tl!("Update check is not supported in the web browser.").to_string());
+        }
+        #[cfg(target_os = "android")]
+        {
+            app.updates_rt.status_message = Some("Updates are delivered via F-Droid / APK releases.".to_string());
+        }
     }
 }
 
 pub(crate) fn tick(app: &mut WordApp, ctx: &egui::Context) {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     {
         let rt = &mut app.updates_rt;
         rt.repaint = Some(ctx.clone());
@@ -115,12 +126,12 @@ pub(crate) fn tick(app: &mut WordApp, ctx: &egui::Context) {
         }
         rt.updater.tick(ctx);
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
     let _ = (app, ctx);
 }
 
 pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     {
         // An update starts, and a ready one asks the app to close, only while no work is unsaved.
         let clean = !(app.session.dirty || app.save_unconfirmed() || app.printing.busy() || crate::panes::has_comment_drafts(app));
@@ -162,7 +173,7 @@ pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
     if app.updates_rt.manual_window_open {
         let mut open = true;
         egui::Window::new(tl!("Check for Updates"))
@@ -184,7 +195,7 @@ pub(crate) fn show(app: &mut WordApp, ctx: &egui::Context) {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
 mod tests {
     use craft_update::updater::Status;
 
