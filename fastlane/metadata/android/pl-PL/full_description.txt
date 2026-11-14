@@ -1,4 +1,4 @@
-WordCraft (Android) to nieoficjalny, w pełni otwarty i działający w 100% offline fork edytora WordCraft (storytold/wordcraft), zbudowany w czystym Ruście i Kotlinie.
+WordCraft (APK) to nieoficjalny, w pełni otwarty i działający w 100% offline fork edytora WordCraft (storytold/wordcraft), zbudowany w czystym Ruście i Kotlinie.
 
 Najważniejsze funkcje:
 - Otwiera i zapisuje pliki .docx (OOXML), .odt, .rtf, .html, .md oraz .txt; otwiera starsze pliki .doc; eksportuje PDF z zaznaczalnym tekstem.

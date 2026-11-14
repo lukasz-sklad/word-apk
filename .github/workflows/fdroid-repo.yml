@@ -132,7 +132,7 @@ jobs:
             gh release upload "$TAG" "$APK_PATH" "$SUMS_PATH" --clobber
           else
             gh release create "$TAG" "$APK_PATH" "$SUMS_PATH" \
-              --title "WordCraft Android ${TAG}" \
+              --title "WordCraft (APK) ${TAG}" \
               --notes "Signed offline Android release (versionCode ${APP_VERSION_CODE}, based on WordCraft)."
           fi
 
@@ -205,7 +205,7 @@ jobs:
           # Write F-Droid config.yml with valid zero-indent keys and safe JSON string literals.
           config_lines = [
               f"repo_url: {json.dumps(repo_url)}",
-              'repo_name: "WordCraft (Android) F-Droid Repo"',
+              'repo_name: "WordCraft (APK) F-Droid Repo"',
               'repo_description: "Unofficial 100% offline Android fork based on WordCraft (lukasz-sklad/word-apk)."',
               f"keystore: {json.dumps(str(runner_temp / 'fdroid-repo.p12'))}",
               f"keystorepass: {json.dumps(os.environ['FDROID_REPO_KEYSTORE_PASS'])}",
@@ -227,7 +227,7 @@ jobs:
               f"SourceCode: https://github.com/{owner_repo}",
               f"IssueTracker: https://github.com/{owner_repo}/issues",
               f"Changelog: https://github.com/{owner_repo}/releases",
-              "AutoName: WordCraft (Android)",
+              "Name: WordCraft (APK)",
               "",
           ])
           (work / "metadata" / "one.lmk.wordcraft.yml").write_text(app_meta, encoding="utf-8")
@@ -237,7 +237,7 @@ jobs:
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>WordCraft (Android) — Repo F-Droid</title>
+            <title>WordCraft (APK) — Repo F-Droid</title>
             <style>
               body {{ font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #18181b; background: #f8fafc; }}
               .card {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.5rem; }}
@@ -247,7 +247,7 @@ jobs:
           </head>
           <body>
             <div class="card">
-              <h1>WordCraft (Android) — repozytorium F-Droid</h1>
+              <h1>WordCraft (APK) — repozytorium F-Droid</h1>
               <p>Nieoficjalny, w 100% offline fork edytora WordCraft (bez uprawnienia INTERNET, bez Google Play Services).</p>
               <p><a class="btn" href="{html.escape(fdroid_uri, quote=True)}">Dodaj repozytorium w F-Droid / Droid-ify</a></p>
               <p><strong>Adres repozytorium:</strong><br><code>{html.escape(repo_url)}</code></p>

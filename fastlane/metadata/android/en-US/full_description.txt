@@ -1,4 +1,4 @@
-WordCraft (Android) is an unofficial, 100% offline Android fork based on WordCraft (storytold/wordcraft), written in pure Rust and Kotlin.
+WordCraft (APK) is an unofficial, 100% offline Android fork based on WordCraft (storytold/wordcraft), written in pure Rust and Kotlin.
 
 Key features:
 - Opens and saves .docx (OOXML), .odt, .rtf, .html, .md and .txt; opens legacy .doc files; exports real selectable PDFs.

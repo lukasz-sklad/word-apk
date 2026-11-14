@@ -7,10 +7,10 @@ SourceCode: https://github.com/lukasz-sklad/word-apk
 IssueTracker: https://github.com/lukasz-sklad/word-apk/issues
 Changelog: https://github.com/lukasz-sklad/word-apk/releases
 
-AutoName: WordCraft (Android)
-Summary: Unofficial offline Android fork of WordCraft (.docx, .odt, .rtf, PDF)
+Name: WordCraft (APK)
+Summary: Unofficial offline fork of WordCraft (.docx, .odt, .rtf, PDF)
 Description: |-
-  WordCraft (Android) is an unofficial, 100% offline Android fork based on WordCraft
+  WordCraft (APK) is an unofficial, 100% offline Android fork based on WordCraft
   (storytold/wordcraft), written in pure Rust and Kotlin.
 
   Features:
