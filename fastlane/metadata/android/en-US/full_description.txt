@@ -1,7 +1,7 @@
 WordCraft (APK) is an unofficial, 100% offline Android fork based on WordCraft (storytold/wordcraft), written in pure Rust and Kotlin.
 
 Key features:
-- Opens and saves .docx (OOXML), .odt, .rtf, .html, .md and .txt; opens legacy .doc files; exports real selectable PDFs.
+- Opens and saves .docx (OOXML), .odt, .rtf, .html, .md and .txt; opens legacy .doc files; exports PDF.
 - Touch-adapted toolbar in Polish (PL) and English (EN) with safe-area cutout / freeform window detection.
 - Gboard / IME composition and autocorrect support, voice dictation via system keyboard, single-finger selection mode (Sel/Zazn), and two-finger pinch zoom.
 - Bundled offline Polish Hunspell dictionary (pl_PL) and TeX hyphenation patterns alongside English proofing.

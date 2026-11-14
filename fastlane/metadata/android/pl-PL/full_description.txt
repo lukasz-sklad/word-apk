@@ -1,7 +1,7 @@
 WordCraft (APK) to nieoficjalny, w pełni otwarty i działający w 100% offline fork edytora WordCraft (storytold/wordcraft), zbudowany w czystym Ruście i Kotlinie.
 
 Najważniejsze funkcje:
-- Otwiera i zapisuje pliki .docx (OOXML), .odt, .rtf, .html, .md oraz .txt; otwiera starsze pliki .doc; eksportuje PDF z zaznaczalnym tekstem.
+- Otwiera i zapisuje pliki .docx (OOXML), .odt, .rtf, .html, .md oraz .txt; otwiera starsze pliki .doc; eksportuje PDF.
 - Spójna górna belka dotykowa w języku polskim (PL) i angielskim (EN) z wykrywaniem wycięcia aparatu oraz okien trybu komputerowego.
 - Obsługa klawiatury Gboard (podpowiedzi, autokorekta, dyktowanie głosowe, poprawki w środku zdania), tryb zaznaczania jednym palcem (Zazn) i powiększanie dwoma palcami.
 - Wbudowany offline'owy słownik polski (pl_PL, SJP.PL) i reguły dzielenia wyrazów TeX.

@@ -35,7 +35,7 @@
 
 ## Funkcje
 
-* **Formaty plików:** otwiera i zapisuje `.docx` (OOXML), `.odt`, `.rtf`, `.html`, `.md`, `.txt`; otwiera starsze pliki `.doc` (97–2003); eksportuje PDF z zaznaczalnym tekstem.
+* **Formaty plików:** otwiera i zapisuje `.docx` (OOXML), `.odt`, `.rtf`, `.html`, `.md`, `.txt`; otwiera starsze pliki `.doc` (97–2003); eksportuje PDF.
 * **Języki i pisownia offline:** spójna górna belka dotykowa **PL / EN**, wbudowany polski słownik Hunspell (`pl_PL`, SJP.PL) i reguły dzielenia wyrazów TeX oraz słownik angielski.
 * **Klawiatura i dotyk:** poprawiona obsługa klawiatury Gboard / IME (podpowiedzi, autokorekta, dyktowanie głosowe, poprawki w środku zdania), tryb zaznaczania jednym palcem (`Zazn` / `Sel`) i powiększanie dwoma palcami.
 * **Ekran i tryb okienkowy:** wykrywanie wycięcia aparatu (cutout), pasków systemowych i okien trybu komputerowego (Android desktop / freeform), motywy `System` / `Light` / `Sepia` / `Dark`.
