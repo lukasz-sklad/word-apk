@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Nieoficjalny, w 100% offline edytor dokumentów dla Androida oparty na <a href="https://github.com/storytold/wordcraft">WordCraft</a></b><br>
-  <sub>Unofficial 100% offline Android fork based on WordCraft (written in Rust &amp; Kotlin) · pod ikoną w systemie: <b>Word</b></sub>
+  <sub>Unofficial 100% offline Android fork based on WordCraft (written in Rust &amp; Kotlin)</sub>
 </p>
 
 <p align="center">
