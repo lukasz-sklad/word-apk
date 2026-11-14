@@ -27,9 +27,9 @@ use wordcraft_ui_egui::{FileDialogAnswer, FileDialogRequest, Services, UiState, 
 
 use crate::ime;
 use crate::mobile::{
-    self, AndroidThemeMode, CzytajController, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults, apply_initial_viewport_zoom,
-    czytaj_is_playing, document_pan_rect, effective_ime_wanted, hover_to_egui_event, prefs_write_atomic, to_egui_events, utf8_byte_to_utf16_offset,
-    wheel_to_egui_event,
+    self, AndroidThemeMode, CzytajController, MobileStrings, SafeInsetsDp, TouchGestureFilter, apply_initial_mobile_defaults,
+    apply_initial_viewport_zoom, czytaj_is_playing, document_pan_rect, effective_ime_wanted, hover_to_egui_event, mobile_strings, prefs_write_atomic,
+    to_egui_events, utf8_byte_to_utf16_offset, wheel_to_egui_event,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -340,7 +340,8 @@ impl AndroidShell {
                 saf.register_mapping(path.clone(), req.content_uri);
             }
             if let Err(e) = self.app.open_from_platform(&req.staging_path, None) {
-                self.app.status(format!("Open failed: {e}"));
+                let s = mobile_strings(i18n::current().code());
+                self.app.status(format!("{}: {e}", s.open_failed_prefix));
             } else {
                 apply_initial_mobile_defaults(&mut self.app, true);
                 self.applied_initial_viewport_zoom = false;
@@ -421,74 +422,94 @@ impl AndroidShell {
 
     fn draw_mobile_toolbar(&mut self, ui: &mut Ui) {
         let t = theme::Tokens::get(ui.ctx());
-        let narrow = ui.available_width() < 620.0;
+        let s = mobile_strings(i18n::current().code());
+        let avail_w = ui.available_width();
+        let narrow = avail_w < 620.0;
+        let compact = avail_w < 500.0;
         let height = if narrow { 66.0 } else { 38.0 };
-        let frame = egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin::symmetric(6, 3));
+        let frame = egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin::symmetric(if compact { 4 } else { 6 }, 3));
         egui::Panel::top("android_mobile_bar").exact_size(height).frame(frame).show(ui, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+            if compact {
+                ui.spacing_mut().item_spacing = egui::vec2(2.5, 3.0);
+                ui.spacing_mut().button_padding = egui::vec2(5.0, 2.0);
+            } else {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
+            }
             if narrow {
                 ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        self.draw_doc_buttons(ui);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            self.draw_theme_and_zoom_rtl(ui);
-                        });
-                    });
-                    ui.horizontal(|ui| {
-                        self.draw_edit_and_view_buttons(ui);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            self.draw_compact_status_pill(ui, t);
-                        });
-                    });
+                    self.draw_narrow_bar_row(
+                        ui,
+                        "android_bar_row1",
+                        168.0,
+                        |shell, ui| shell.draw_doc_buttons(ui, s, compact),
+                        |shell, ui| shell.draw_theme_and_zoom_rtl(ui, s, compact),
+                        |shell, ui| shell.draw_zoom_and_theme_ltr(ui, s, compact),
+                    );
+                    self.draw_narrow_bar_row(
+                        ui,
+                        "android_bar_row2",
+                        96.0,
+                        |shell, ui| shell.draw_edit_and_view_buttons(ui, s, compact),
+                        |shell, ui| shell.draw_compact_status_pill(ui, t, s),
+                        |shell, ui| shell.draw_compact_status_pill(ui, t, s),
+                    );
                 });
             } else {
                 egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
                     ui.horizontal_centered(|ui| {
-                        self.draw_doc_buttons(ui);
+                        self.draw_doc_buttons(ui, s, false);
                         ui.separator();
-                        self.draw_edit_and_view_buttons(ui);
+                        self.draw_edit_and_view_buttons(ui, s, false);
                         ui.separator();
-                        self.draw_zoom_and_theme_ltr(ui);
+                        self.draw_zoom_and_theme_ltr(ui, s, false);
                         ui.separator();
-                        self.draw_compact_status_pill(ui, t);
+                        self.draw_compact_status_pill(ui, t, s);
                     });
                 });
             }
         });
     }
 
-    fn draw_doc_buttons(&mut self, ui: &mut Ui) {
-        if toolbar_pill(ui, "Open", false).clicked() {
+    fn draw_doc_buttons(&mut self, ui: &mut Ui, s: MobileStrings, compact: bool) {
+        if toolbar_pill(ui, s.open, false, compact).clicked() {
             let _ = self.app.run("ui.openFileDialog", json!({}));
         }
-        if toolbar_pill(ui, "New", false).clicked() {
+        if toolbar_pill(ui, s.new_doc, false, compact).clicked() {
             let _ = self.app.run("file.new", json!({}));
             apply_initial_mobile_defaults(&mut self.app, true);
         }
-        if toolbar_pill(ui, "Save", self.app.session.dirty).clicked() {
+        if toolbar_pill(ui, s.save, self.app.session.dirty, compact).clicked() {
             let cmd = if self.app.session.path.is_some() { "file.save" } else { "file.saveAs" };
             let _ = self.app.run(cmd, json!({}));
         }
-        if ui.add_enabled(self.app.session.can_undo(), egui::Button::new("Undo").min_size(egui::vec2(28.0, 26.0))).clicked() {
+        let text_size = if compact { 12.0 } else { 13.0 };
+        let min_w = if compact { 24.0 } else { 28.0 };
+        if ui
+            .add_enabled(self.app.session.can_undo(), egui::Button::new(RichText::new(s.undo).size(text_size)).min_size(egui::vec2(min_w, 26.0)))
+            .clicked()
+        {
             let _ = self.app.execute("edit.undo", json!({}));
         }
-        if ui.add_enabled(self.app.session.can_redo(), egui::Button::new("Redo").min_size(egui::vec2(28.0, 26.0))).clicked() {
+        if ui
+            .add_enabled(self.app.session.can_redo(), egui::Button::new(RichText::new(s.redo).size(text_size)).min_size(egui::vec2(min_w, 26.0)))
+            .clicked()
+        {
             let _ = self.app.execute("edit.redo", json!({}));
         }
     }
 
-    fn draw_edit_and_view_buttons(&mut self, ui: &mut Ui) {
-        if toolbar_pill(ui, "B", false).clicked() {
+    fn draw_edit_and_view_buttons(&mut self, ui: &mut Ui, s: MobileStrings, compact: bool) {
+        if toolbar_pill(ui, s.bold, false, compact).clicked() {
             let _ = self.app.execute("format.bold", json!({}));
         }
-        if toolbar_pill(ui, "I", false).clicked() {
+        if toolbar_pill(ui, s.italic, false, compact).clicked() {
             let _ = self.app.execute("format.italic", json!({}));
         }
-        if toolbar_pill(ui, "Sel", self.select_mode).clicked() {
+        if toolbar_pill(ui, s.select, self.select_mode, compact).clicked() {
             self.select_mode = !self.select_mode;
         }
         let kb_active = (self.ime_wanted || self.insets.ime_visible) && !self.ime_suppressed;
-        if toolbar_pill_enabled(ui, "KB", kb_active, !self.ime_suppressed).clicked() {
+        if toolbar_pill_enabled(ui, s.keyboard, kb_active, !self.ime_suppressed, compact).clicked() {
             let now = ui.ctx().input(|i| i.time);
             self.set_ime_wanted(!kb_active, now);
             if !kb_active {
@@ -496,23 +517,16 @@ impl AndroidShell {
             }
         }
         let is_web = self.app.session.view.mode == ViewMode::Web;
-        let layout_label = if is_web {
-            "Web"
-        } else if i18n::current().code() == "pl" {
-            "Dok"
-        } else {
-            "Page"
-        };
-        if toolbar_pill(ui, layout_label, is_web).clicked() {
+        let layout_label = if is_web { s.web_view } else { s.page_view };
+        if toolbar_pill(ui, layout_label, is_web, compact).clicked() {
             let cmd = if is_web { "view.printLayout" } else { "view.webLayout" };
             let _ = self.app.execute(cmd, json!({}));
         }
-        let czytaj_label = if i18n::current().code() == "pl" { "Czytaj" } else { "Read" };
-        if toolbar_pill(ui, czytaj_label, czytaj_is_playing(&self.app)).clicked() {
+        if toolbar_pill(ui, s.read_aloud, czytaj_is_playing(&self.app), compact).clicked() {
             self.czytaj.toggle(&mut self.app);
         }
         let ribbon_open = !self.app.ui.ribbon_collapsed && !self.app.ui.hide_ribbon_strip;
-        if toolbar_pill(ui, "Rib", ribbon_open).clicked() {
+        if toolbar_pill(ui, s.ribbon, ribbon_open, compact).clicked() {
             let compact_landscape_ime = self.insets.ime_visible && ui.ctx().content_rect().height() < 520.0;
             if compact_landscape_ime && self.app.ui.hide_ribbon_strip {
                 self.ribbon_pinned_during_ime = true;
@@ -525,7 +539,7 @@ impl AndroidShell {
                 }
             }
         }
-        if toolbar_pill(ui, "Kla", self.ime_suppressed).clicked() {
+        if toolbar_pill(ui, s.lock_keyboard, self.ime_suppressed, compact).clicked() {
             self.ime_suppressed = !self.ime_suppressed;
             self.bridge.set_ime_suppressed(self.ime_suppressed);
             if self.ime_suppressed {
@@ -535,42 +549,42 @@ impl AndroidShell {
         }
     }
 
-    fn draw_theme_and_zoom_rtl(&mut self, ui: &mut Ui) {
-        if toolbar_pill(ui, self.theme_mode.short_label(), self.theme_mode != AndroidThemeMode::System).clicked() {
+    fn draw_theme_and_zoom_rtl(&mut self, ui: &mut Ui, s: MobileStrings, compact: bool) {
+        if toolbar_pill(ui, self.theme_mode.short_label_for(&s), self.theme_mode != AndroidThemeMode::System, compact).clicked() {
             self.theme_mode = self.theme_mode.cycle_next();
             self.theme_mode.apply(&mut self.app);
             save_theme_mode(&self.files_dir, self.theme_mode);
         }
         let pct = (self.app.session.view.zoom * 100.0).round();
-        if toolbar_pill(ui, "+", false).clicked() {
+        if toolbar_pill(ui, "+", false, compact).clicked() {
             let next = (pct + 15.0).clamp(25.0, 400.0);
             let _ = self.app.execute("view.zoom", json!({ "value": next }));
         }
         let zoom_text = format!("{pct:.0}%");
-        if toolbar_pill(ui, &zoom_text, false).clicked() {
+        if toolbar_pill(ui, &zoom_text, false, compact).clicked() {
             self.reset_default_zoom(ui);
         }
-        if toolbar_pill(ui, "-", false).clicked() {
+        if toolbar_pill(ui, "-", false, compact).clicked() {
             let next = (pct - 15.0).clamp(25.0, 400.0);
             let _ = self.app.execute("view.zoom", json!({ "value": next }));
         }
     }
 
-    fn draw_zoom_and_theme_ltr(&mut self, ui: &mut Ui) {
+    fn draw_zoom_and_theme_ltr(&mut self, ui: &mut Ui, s: MobileStrings, compact: bool) {
         let pct = (self.app.session.view.zoom * 100.0).round();
-        if toolbar_pill(ui, "-", false).clicked() {
+        if toolbar_pill(ui, "-", false, compact).clicked() {
             let next = (pct - 15.0).clamp(25.0, 400.0);
             let _ = self.app.execute("view.zoom", json!({ "value": next }));
         }
         let zoom_text = format!("{pct:.0}%");
-        if toolbar_pill(ui, &zoom_text, false).clicked() {
+        if toolbar_pill(ui, &zoom_text, false, compact).clicked() {
             self.reset_default_zoom(ui);
         }
-        if toolbar_pill(ui, "+", false).clicked() {
+        if toolbar_pill(ui, "+", false, compact).clicked() {
             let next = (pct + 15.0).clamp(25.0, 400.0);
             let _ = self.app.execute("view.zoom", json!({ "value": next }));
         }
-        if toolbar_pill(ui, self.theme_mode.short_label(), self.theme_mode != AndroidThemeMode::System).clicked() {
+        if toolbar_pill(ui, self.theme_mode.short_label_for(&s), self.theme_mode != AndroidThemeMode::System, compact).clicked() {
             self.theme_mode = self.theme_mode.cycle_next();
             self.theme_mode.apply(&mut self.app);
             save_theme_mode(&self.files_dir, self.theme_mode);
@@ -587,20 +601,46 @@ impl AndroidShell {
         }
     }
 
-    fn draw_compact_status_pill(&mut self, ui: &mut Ui, t: theme::Tokens) {
+    fn draw_compact_status_pill(&mut self, ui: &mut Ui, t: theme::Tokens, s: MobileStrings) {
         if !self.app.has_document() {
             return;
         }
         let pages = self.app.session.layout().pages.len().max(1);
         let page = self.app.canvas.viewed_page.unwrap_or(self.app.session.page_hint).min(pages - 1) + 1;
         let words = self.app.cached_status_counts().words;
-        let label = format!("P{page}/{pages} · {words}w");
+        let label = s.format_status(page, pages, words);
         if ui
-            .add(egui::Button::new(RichText::new(label).size(11.5).color(t.text_dim)).fill(Color32::TRANSPARENT).min_size(egui::vec2(28.0, 26.0)))
+            .add(egui::Button::new(RichText::new(label).size(11.0).color(t.text_dim)).fill(Color32::TRANSPARENT).min_size(egui::vec2(24.0, 26.0)))
             .clicked()
         {
             let _ = self.app.run("ui.dialog", json!({ "name": "wordCount" }));
         }
+    }
+
+    fn draw_narrow_bar_row(
+        &mut self,
+        ui: &mut Ui,
+        salt: &str,
+        min_right_w: f32,
+        left: impl FnOnce(&mut Self, &mut Ui),
+        right_rtl: impl FnOnce(&mut Self, &mut Ui),
+        right_ltr: impl FnOnce(&mut Self, &mut Ui),
+    ) {
+        egui::ScrollArea::horizontal()
+            .id_salt(salt)
+            .auto_shrink([false, true])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    left(self, ui);
+                    if ui.available_width() >= min_right_w {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| right_rtl(self, ui));
+                    } else {
+                        ui.separator();
+                        right_ltr(self, ui);
+                    }
+                });
+            });
     }
 }
 
@@ -680,15 +720,17 @@ impl eframe::App for AndroidShell {
     }
 }
 
-fn toolbar_pill(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
-    toolbar_pill_enabled(ui, label, active, true)
+fn toolbar_pill(ui: &mut Ui, label: &str, active: bool, compact: bool) -> egui::Response {
+    toolbar_pill_enabled(ui, label, active, true, compact)
 }
 
-fn toolbar_pill_enabled(ui: &mut Ui, label: &str, active: bool, enabled: bool) -> egui::Response {
+fn toolbar_pill_enabled(ui: &mut Ui, label: &str, active: bool, enabled: bool, compact: bool) -> egui::Response {
     let t = theme::Tokens::get(ui.ctx());
     let fill = if active { t.checked } else { Color32::TRANSPARENT };
     let text_col = if active { t.text } else { t.text_dim };
-    let btn = egui::Button::new(RichText::new(label).size(13.0).color(text_col)).fill(fill).min_size(egui::vec2(28.0, 28.0));
+    let size = if compact { 12.0 } else { 13.0 };
+    let min_w = if compact { 24.0 } else { 28.0 };
+    let btn = egui::Button::new(RichText::new(label).size(size).color(text_col)).fill(fill).min_size(egui::vec2(min_w, 26.0));
     ui.add_enabled(enabled, btn)
 }
 

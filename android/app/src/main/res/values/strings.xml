@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WordCraft</string>
-    <string name="open_file">Otwórz dokument</string>
-    <string name="new_document">Nowy pusty dokument</string>
-    <string name="recent_documents">Ostatnie dokumenty</string>
-    <string name="no_recent_documents">Brak ostatnio otwieranych dokumentów</string>
-    <string name="open_file_desc">Otwórz plik .docx, .odt, .txt lub .md z pamięci telefonu lub chmury</string>
-    <string name="new_file_desc">Rozpocznij pisanie od czystej kartki</string>
-    <string name="action_bold">Pogrubienie</string>
-    <string name="action_italic">Kursywa</string>
-    <string name="action_underline">Podkreślenie</string>
-    <string name="action_undo">Cofnij</string>
-    <string name="action_redo">Ponów</string>
-    <string name="action_save">Zapisz</string>
-    <string name="action_share">Udostępnij</string>
-    <string name="action_bullet_list">Lista</string>
-    <string name="action_search">Szukaj</string>
+    <string name="open_file">Open document</string>
+    <string name="new_document">New blank document</string>
+    <string name="recent_documents">Recent documents</string>
+    <string name="no_recent_documents">No recent documents</string>
+    <string name="open_file_desc">Open a .docx, .odt, .txt, or .md file from device storage or cloud</string>
+    <string name="new_file_desc">Start writing from a blank page</string>
+    <string name="action_bold">Bold</string>
+    <string name="action_italic">Italic</string>
+    <string name="action_underline">Underline</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_redo">Redo</string>
+    <string name="action_save">Save</string>
+    <string name="action_share">Share</string>
+    <string name="action_bullet_list">List</string>
+    <string name="action_search">Search</string>
 </resources>

@@ -5,9 +5,13 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
+import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -15,6 +19,7 @@ import android.text.InputType
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -63,6 +68,8 @@ class WordCraftActivity : GameActivity() {
     @Volatile
     private var imeSuppressed = false
     private var lastImeVisible = false
+    private var lastSentInsets: SurfaceInsets? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
 
     @Volatile
     private var currentSurroundingText = ""
@@ -104,6 +111,7 @@ class WordCraftActivity : GameActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        configureTransparentSystemBars()
         configureCutoutMode()
         super.onCreate(savedInstanceState)
 
@@ -112,6 +120,7 @@ class WordCraftActivity : GameActivity() {
         root?.addView(imeProxy, ViewGroup.LayoutParams(1, 1))
 
         installInsetsListener()
+        registerDisplayListener()
         installFocusGuard()
         syncSystemNightMode(resources.configuration)
         val isNight = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -121,6 +130,7 @@ class WordCraftActivity : GameActivity() {
     }
 
     override fun onDestroy() {
+        unregisterDisplayListener()
         synchronized(ttsLock) {
             activeUtteranceId = ""
             activeUtteranceState = TTS_STATE_STOPPED
@@ -135,6 +145,25 @@ class WordCraftActivity : GameActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         syncSystemNightMode(newConfig)
+        requestSafeInsets()
+    }
+
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        syncSystemNightMode(newConfig)
+        requestSafeInsets()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        requestSafeInsets()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            requestSafeInsets()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -185,13 +214,21 @@ class WordCraftActivity : GameActivity() {
 
     override fun onResume() {
         super.onResume()
-        ViewCompat.requestApplyInsets(window.decorView)
+        requestSafeInsets()
         if (imeWanted) {
             imeProxy.post {
                 if (imeWanted) {
                     showImeNow()
                 }
             }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun configureTransparentSystemBars() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
         }
     }
 
@@ -206,13 +243,24 @@ class WordCraftActivity : GameActivity() {
     }
 
     private fun installInsetsListener() {
-        ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { view, insets ->
-            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
-            val imeBottom = if (imeVisible) ime.bottom.coerceAtLeast(1) else 0
-            nativeOnInsets(safe.left, safe.top, safe.right, safe.bottom, imeBottom)
+        val contentRoot = window.decorView.findViewById<ViewGroup>(android.R.id.content)
+        val insetHost: View = contentRoot ?: window.decorView
 
+        ViewCompat.setOnApplyWindowInsetsListener(insetHost) { view, insets ->
+            val targetSurface = findFirstSurfaceView(contentRoot) ?: view
+            val surfaceInsets = extractSurfaceInsets(window.decorView, targetSurface, insets)
+            if (surfaceInsets != lastSentInsets) {
+                lastSentInsets = surfaceInsets
+                nativeOnInsets(
+                    surfaceInsets.left,
+                    surfaceInsets.top,
+                    surfaceInsets.right,
+                    surfaceInsets.bottom,
+                    surfaceInsets.imeBottom,
+                )
+            }
+
+            val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
             val wasVisible = lastImeVisible
             lastImeVisible = imeVisible
             if (wasVisible && !imeVisible) {
@@ -222,7 +270,60 @@ class WordCraftActivity : GameActivity() {
             }
             ViewCompat.onApplyWindowInsets(view, insets)
         }
-        ViewCompat.requestApplyInsets(window.decorView)
+
+        insetHost.addOnLayoutChangeListener { v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom) {
+                v.post { requestSafeInsets() }
+            }
+        }
+        ViewCompat.requestApplyInsets(insetHost)
+    }
+
+    private fun requestSafeInsets() {
+        val host = window.decorView.findViewById<View>(android.R.id.content) ?: window.decorView
+        ViewCompat.requestApplyInsets(host)
+    }
+
+    private fun findFirstSurfaceView(root: View?): SurfaceView? {
+        if (root is SurfaceView) {
+            return root
+        }
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                val found = findFirstSurfaceView(root.getChildAt(i))
+                if (found != null) {
+                    return found
+                }
+            }
+        }
+        return null
+    }
+
+    private fun registerDisplayListener() {
+        if (displayListener != null) return
+        val manager = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {
+                window.decorView.post { requestSafeInsets() }
+            }
+
+            override fun onDisplayRemoved(displayId: Int) {
+                window.decorView.post { requestSafeInsets() }
+            }
+
+            override fun onDisplayChanged(displayId: Int) {
+                window.decorView.post { requestSafeInsets() }
+            }
+        }
+        displayListener = listener
+        manager.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+    }
+
+    private fun unregisterDisplayListener() {
+        val listener = displayListener ?: return
+        displayListener = null
+        val manager = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        manager.unregisterDisplayListener(listener)
     }
 
     private fun installFocusGuard() {

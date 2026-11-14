@@ -537,6 +537,99 @@ fn emit_wheel(out: &mut Vec<Event>, delta: Vec2, phase: TouchPhase) {
     out.push(Event::MouseWheel { unit: MouseWheelUnit::Point, delta, phase, modifiers: Modifiers::NONE, source: MouseWheelSource::Unknown });
 }
 
+/// Localized UI strings for the custom Android mobile shell.
+///
+/// Currently provides English (`en`, default fallback) and Polish (`pl`) so the top bar never
+/// mixes languages on screen. Additional languages can be added cleanly via pull request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileStrings {
+    pub open: &'static str,
+    pub new_doc: &'static str,
+    pub save: &'static str,
+    pub undo: &'static str,
+    pub redo: &'static str,
+    pub bold: &'static str,
+    pub italic: &'static str,
+    pub select: &'static str,
+    pub keyboard: &'static str,
+    pub page_view: &'static str,
+    pub web_view: &'static str,
+    pub read_aloud: &'static str,
+    pub ribbon: &'static str,
+    pub lock_keyboard: &'static str,
+    pub theme_system: &'static str,
+    pub theme_light: &'static str,
+    pub theme_sepia: &'static str,
+    pub theme_dark: &'static str,
+    pub nothing_to_read: &'static str,
+    pub open_failed_prefix: &'static str,
+    page_short: &'static str,
+    words_short: &'static str,
+}
+
+const EN_STRINGS: MobileStrings = MobileStrings {
+    open: "Open",
+    new_doc: "New",
+    save: "Save",
+    undo: "Undo",
+    redo: "Redo",
+    bold: "B",
+    italic: "I",
+    select: "Sel",
+    keyboard: "KB",
+    page_view: "Page",
+    web_view: "Web",
+    read_aloud: "Read",
+    ribbon: "Rib",
+    lock_keyboard: "Lock",
+    theme_system: "Sys",
+    theme_light: "Light",
+    theme_sepia: "Sepia",
+    theme_dark: "Dark",
+    nothing_to_read: "Nothing to read",
+    open_failed_prefix: "Open failed",
+    page_short: "P",
+    words_short: "w",
+};
+
+const PL_STRINGS: MobileStrings = MobileStrings {
+    open: "Otwórz",
+    new_doc: "Nowy",
+    save: "Zapisz",
+    undo: "Cofnij",
+    redo: "Ponów",
+    bold: "B",
+    italic: "I",
+    select: "Zazn",
+    keyboard: "Klaw",
+    page_view: "Dok",
+    web_view: "Web",
+    read_aloud: "Czytaj",
+    ribbon: "Wst",
+    lock_keyboard: "Blok",
+    theme_system: "Sys",
+    theme_light: "Jasny",
+    theme_sepia: "Sepia",
+    theme_dark: "Ciemny",
+    nothing_to_read: "Brak tekstu do czytania",
+    open_failed_prefix: "Błąd otwierania",
+    page_short: "S",
+    words_short: " sł.",
+};
+
+/// Returns consistent mobile toolbar strings in Polish (`"pl"`) or English (default fallback).
+pub fn mobile_strings(lang_code: &str) -> MobileStrings {
+    let primary = lang_code.trim().split(['-', '_']).next().unwrap_or("");
+    if primary.eq_ignore_ascii_case("pl") { PL_STRINGS } else { EN_STRINGS }
+}
+
+impl MobileStrings {
+    /// Formats the compact page/word indicator (`P1/2 · 15w` in EN, `S1/2 · 15 sł.` in PL).
+    pub fn format_status(self, page: usize, pages: usize, words: usize) -> String {
+        format!("{}{page}/{pages} · {words}{}", self.page_short, self.words_short)
+    }
+}
+
 /// User-facing Android appearance & paper preset cycled from the mobile quick bar.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AndroidThemeMode {
@@ -548,14 +641,19 @@ pub enum AndroidThemeMode {
 }
 
 impl AndroidThemeMode {
-    /// Short label displayed on the compact mobile theme pill.
-    pub const fn short_label(self) -> &'static str {
+    /// Short localized label displayed on the compact mobile theme pill.
+    pub const fn short_label_for(self, strings: &MobileStrings) -> &'static str {
         match self {
-            Self::System => "Sys",
-            Self::Light => "Light",
-            Self::Sepia => "Sepia",
-            Self::Dark => "Dark",
+            Self::System => strings.theme_system,
+            Self::Light => strings.theme_light,
+            Self::Sepia => strings.theme_sepia,
+            Self::Dark => strings.theme_dark,
         }
+    }
+
+    /// English short label displayed on the compact mobile theme pill.
+    pub const fn short_label(self) -> &'static str {
+        self.short_label_for(&EN_STRINGS)
     }
 
     /// Cycles through System -> Light -> Sepia -> Dark -> System.
@@ -656,8 +754,8 @@ impl CzytajController {
         let queue = wordcraft_engine::speech::sentences(&app.session.doc, &from, to.as_ref(), app.session.read_aloud.skip_citations);
         if queue.is_empty() {
             self.paused_selection = None;
-            let msg = if wordcraft_ui_egui::i18n::current().code() == "pl" { "Brak tekstu do czytania" } else { "Nothing to read" };
-            app.status(msg);
+            let s = mobile_strings(wordcraft_ui_egui::i18n::current().code());
+            app.status(s.nothing_to_read);
             return;
         }
         self.paused_selection = next_sel;
@@ -996,5 +1094,39 @@ mod tests {
         czytaj.toggle(&mut app);
         assert_eq!(app.session.read_aloud.state(), State::Playing);
         assert_eq!(app.session.read_aloud.current().map(|u| u.text).as_deref(), Some("Trzecie zdanie."));
+    }
+
+    #[test]
+    fn mobile_strings_english_set_is_consistent() {
+        let en = mobile_strings("en");
+        assert_eq!((en.open, en.new_doc, en.save, en.undo, en.redo), ("Open", "New", "Save", "Undo", "Redo"));
+        assert_eq!((en.select, en.keyboard, en.page_view, en.read_aloud, en.ribbon, en.lock_keyboard), ("Sel", "KB", "Page", "Read", "Rib", "Lock"),);
+        assert_eq!(AndroidThemeMode::Light.short_label_for(&en), "Light");
+        assert_eq!(AndroidThemeMode::Dark.short_label_for(&en), "Dark");
+        assert_eq!(en.format_status(1, 3, 42), "P1/3 · 42w");
+    }
+
+    #[test]
+    fn mobile_strings_polish_set_is_consistent() {
+        for code in ["pl", "pl-PL", "PL_pl"] {
+            let pl = mobile_strings(code);
+            assert_eq!((pl.open, pl.new_doc, pl.save, pl.undo, pl.redo), ("Otwórz", "Nowy", "Zapisz", "Cofnij", "Ponów"));
+            assert_eq!(
+                (pl.select, pl.keyboard, pl.page_view, pl.read_aloud, pl.ribbon, pl.lock_keyboard),
+                ("Zazn", "Klaw", "Dok", "Czytaj", "Wst", "Blok"),
+            );
+            assert_ne!(pl.keyboard, pl.lock_keyboard);
+            assert_eq!(AndroidThemeMode::Light.short_label_for(&pl), "Jasny");
+            assert_eq!(AndroidThemeMode::Dark.short_label_for(&pl), "Ciemny");
+            assert_eq!(pl.format_status(2, 5, 19), "S2/5 · 19 sł.");
+        }
+    }
+
+    #[test]
+    fn mobile_strings_unsupported_locales_fall_back_to_english() {
+        let en = mobile_strings("en");
+        assert_eq!(mobile_strings("de"), en);
+        assert_eq!(mobile_strings("ja"), en);
+        assert_eq!(mobile_strings(""), en);
     }
 }
