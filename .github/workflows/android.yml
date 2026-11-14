@@ -82,6 +82,9 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
+      - name: Run WordCraft Android Rust Unit Tests
+        run: cargo test -p wordcraft-android
+
       - name: Build Rust Native App (libwordcraft_android.so)
         env:
           RUSTFLAGS: "-C link-arg=-Wl,-z,max-page-size=16384"
@@ -119,11 +122,11 @@ jobs:
             echo "No keystore secrets found. Building unsigned release package."
           fi
 
-      - name: Build Release Bundle (AAB) & APK
+      - name: Run Kotlin Unit Tests & Build Release Bundle (AAB) & APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew bundleRelease assembleRelease --stacktrace
+          ./gradlew testDebugUnitTest bundleRelease assembleRelease --stacktrace
 
       - name: Prepare Versioned Packages
         run: |
