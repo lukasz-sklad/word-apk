@@ -1,0 +1,1 @@
+Nieoficjalny edytor tekstu offline oparty na WordCraft (.docx, .odt, PDF)

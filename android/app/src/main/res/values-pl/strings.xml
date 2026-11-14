@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">WordCraft</string>
+    <string name="app_name">Word</string>
     <string name="open_file">Otwórz dokument</string>
     <string name="new_document">Nowy pusty dokument</string>
     <string name="recent_documents">Ostatnie dokumenty</string>

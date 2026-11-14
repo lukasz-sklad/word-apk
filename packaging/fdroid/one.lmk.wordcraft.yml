@@ -1,0 +1,55 @@
+Categories:
+  - Writing
+  - Office
+License: MIT OR Apache-2.0
+AuthorName: WordCraft contributors, lukasz-sklad
+SourceCode: https://github.com/lukasz-sklad/word-apk
+IssueTracker: https://github.com/lukasz-sklad/word-apk/issues
+Changelog: https://github.com/lukasz-sklad/word-apk/releases
+
+AutoName: WordCraft (Android)
+Summary: Unofficial offline Android fork of WordCraft (.docx, .odt, .rtf, PDF)
+Description: |-
+  WordCraft (Android) is an unofficial, 100% offline Android fork based on WordCraft
+  (storytold/wordcraft), written in pure Rust and Kotlin.
+
+  Features:
+  * Opens and saves .docx (OOXML), .odt, .rtf, .html, .md and .txt; opens legacy .doc files; exports PDF
+  * Bilingual top toolbar (PL / EN) with display-cutout and freeform/desktop-window awareness
+  * Native Android IME / Gboard composition, suggestions and voice dictation support
+  * Single-finger touch selection mode (Sel / Zazn) and two-finger pinch zoom
+  * Bundled offline Polish dictionary (pl_PL) and TeX hyphenation alongside English proofing
+  * Privacy: no INTERNET permission, no Google Play Services, no trackers, no ads
+
+RepoType: git
+Repo: https://github.com/lukasz-sklad/word-apk.git
+
+Builds:
+  - versionName: 0.18.1
+    versionCode: 1
+    commit: v0.18.1
+    subdir: android
+    gradle:
+      - yes
+    srclibs:
+      - rustup@1.28.2
+      - craft-i18n@1e515422afdda2f317af430c1f9d68a5f83935b4
+    ndk: r27c
+    rm:
+      - android/gradle/wrapper/gradle-wrapper.jar
+    prebuild:
+      - $$rustup$$/rustup-init.sh -y --no-modify-path --default-toolchain 1.95.0 --profile minimal --target aarch64-linux-android x86_64-linux-android
+      - source "$HOME/.cargo/env"
+      - cargo install cargo-ndk --locked
+      - pushd .. && cargo fetch --locked && popd
+    build:
+      - source "$HOME/.cargo/env"
+      - export ANDROID_NDK_HOME=$$NDK$$
+      - export CRAFT_I18N_DIR=$$craft-i18n$$
+      - export RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+      - pushd .. && cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --release --offline -p wordcraft-android && popd
+
+AutoUpdateMode: Version v%v
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+(\.[0-9]+)*$
+CurrentVersion: 0.18.1
+CurrentVersionCode: 1

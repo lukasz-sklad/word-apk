@@ -1,0 +1,1 @@
+Unofficial offline Android fork of WordCraft (.docx, .odt, .rtf, PDF)

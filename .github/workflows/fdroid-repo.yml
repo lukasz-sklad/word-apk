@@ -1,0 +1,279 @@
+name: Release & F-Droid Repo (GitHub Pages)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: fdroid-repo-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-publish-fdroid:
+    name: Build Signed APK & Publish F-Droid Repo
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check Required Signing Secrets
+        env:
+          HAS_APP_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_ALIAS != '' && secrets.KEY_PASSWORD != '' }}
+          HAS_REPO_KEYSTORE: ${{ secrets.FDROID_REPO_KEYSTORE_BASE64 != '' && secrets.FDROID_REPO_KEYSTORE_PASS != '' && secrets.FDROID_REPO_KEY_PASS != '' && secrets.FDROID_REPO_KEY_ALIAS != '' }}
+        run: |
+          if [ "$HAS_APP_KEYSTORE" != "true" ] || [ "$HAS_REPO_KEYSTORE" != "true" ]; then
+            echo "::error::Missing persistent signing secrets. Configure RELEASE_KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD and FDROID_REPO_KEYSTORE_BASE64 / FDROID_REPO_KEYSTORE_PASS / FDROID_REPO_KEY_PASS / FDROID_REPO_KEY_ALIAS (see packaging/fdroid/README.md)."
+            exit 1
+          fi
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check out craft-i18n
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@main
+
+      - name: Extract and Verify App Version
+        run: |
+          VERSION=$(grep 'versionName = ' android/app/build.gradle.kts | awk -F'"' '{print $2}')
+          VCODE=$(grep 'versionCode = ' android/app/build.gradle.kts | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=$VCODE" >> "$GITHUB_ENV"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            EXPECTED_TAG="v${VERSION}"
+            if [ "${{ github.ref_name }}" != "$EXPECTED_TAG" ]; then
+              echo "::error::Tag ${{ github.ref_name }} does not match versionName ($EXPECTED_TAG) in android/app/build.gradle.kts."
+              exit 1
+            fi
+          fi
+          echo "Preparing F-Droid release v${VERSION} (versionCode=${VCODE})"
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Rust Native Libraries (libwordcraft_android.so)
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,-z,max-page-size=16384"
+        run: |
+          mkdir -p android/app/src/main/jniLibs
+          cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --release -p wordcraft-android
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Configure Android Release Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        working-directory: android
+        run: |
+          mkdir -p keystore
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > keystore/release.keystore
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          lines = [
+              "storeFile=keystore/release.keystore",
+              f"storePassword={os.environ['STORE_PASSWORD']}",
+              f"keyAlias={os.environ['KEY_ALIAS']}",
+              f"keyPassword={os.environ['KEY_PASSWORD']}",
+          ]
+          Path("keystore.properties").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Build Signed Release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest assembleRelease --no-daemon
+
+      - name: Stage Release APK & SHA256SUMS
+        run: |
+          RELEASE_APK=$(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' -print -quit)
+          if [ -z "$RELEASE_APK" ]; then
+            echo "::error::Expected signed release APK but none was produced."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          cp -f "$RELEASE_APK" "$RUNNER_TEMP/release-assets/wordcraft-v${APP_VERSION}.apk"
+          (cd "$RUNNER_TEMP/release-assets" && sha256sum "wordcraft-v${APP_VERSION}.apk" > SHA256SUMS.txt)
+
+      - name: Publish GitHub Release on Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK_PATH="$RUNNER_TEMP/release-assets/wordcraft-v${APP_VERSION}.apk"
+          SUMS_PATH="$RUNNER_TEMP/release-assets/SHA256SUMS.txt"
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_PATH" "$SUMS_PATH" --clobber
+          else
+            gh release create "$TAG" "$APK_PATH" "$SUMS_PATH" \
+              --title "WordCraft Android ${TAG}" \
+              --notes "Signed offline Android release (versionCode ${APP_VERSION_CODE}, based on WordCraft)."
+          fi
+
+      - name: Set up Python & fdroidserver
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fdroidserver
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fdroid-venv"
+          "$RUNNER_TEMP/fdroid-venv/bin/pip" install --upgrade pip fdroidserver
+
+      - name: Build F-Droid Repository Index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FDROID_REPO_KEYSTORE_BASE64: ${{ secrets.FDROID_REPO_KEYSTORE_BASE64 }}
+          FDROID_REPO_KEYSTORE_PASS: ${{ secrets.FDROID_REPO_KEYSTORE_PASS }}
+          FDROID_REPO_KEY_PASS: ${{ secrets.FDROID_REPO_KEY_PASS }}
+          FDROID_REPO_KEY_ALIAS: ${{ secrets.FDROID_REPO_KEY_ALIAS }}
+        run: |
+          WORK="$RUNNER_TEMP/fdroid-work"
+          SITE="$RUNNER_TEMP/fdroid-site"
+          mkdir -p "$WORK/repo" "$SITE"
+          printf '%s' "$FDROID_REPO_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/fdroid-repo.p12"
+
+          # Keep recent signed release APKs in the repo so F-Droid clients see clean upgrade history.
+          for rel_tag in $(gh release list --limit 5 --json tagName -q '.[].tagName'); do
+            gh release download "$rel_tag" -p 'wordcraft-v*.apk' -D "$WORK/repo" --clobber || true
+          done
+          cp -f "$RUNNER_TEMP/release-assets/wordcraft-v${APP_VERSION}.apk" "$WORK/repo/"
+          mkdir -p "$WORK/metadata/one.lmk.wordcraft"
+          cp -r fastlane/metadata/android/. "$WORK/metadata/one.lmk.wordcraft/"
+
+          OWNER_REPO="${{ github.repository }}"
+          OWNER="${OWNER_REPO%%/*}"
+          REPO_NAME="${OWNER_REPO#*/}"
+          REPO_URL="https://${OWNER}.github.io/${REPO_NAME}/repo"
+
+          set -o pipefail
+          FINGERPRINT=$(keytool -list -v -keystore "$RUNNER_TEMP/fdroid-repo.p12" \
+            -storepass "$FDROID_REPO_KEYSTORE_PASS" -alias "$FDROID_REPO_KEY_ALIAS" \
+            | awk -F': ' '/^[[:space:]]*SHA256:/ {gsub(/[^0-9A-Fa-f]/, "", $2); print $2; exit}')
+          if [ -z "$FINGERPRINT" ]; then
+            echo "::error::Could not extract SHA-256 fingerprint from FDROID_REPO_KEYSTORE_BASE64."
+            exit 1
+          fi
+
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::Could not find apksigner under ANDROID_HOME/build-tools."
+            exit 1
+          fi
+          export WORK SITE OWNER_REPO REPO_URL FINGERPRINT APKSIGNER APP_VERSION
+          python3 - <<'PY'
+          import html
+          import json
+          import os
+          from pathlib import Path
+
+          work = Path(os.environ["WORK"])
+          site = Path(os.environ["SITE"])
+          runner_temp = Path(os.environ["RUNNER_TEMP"])
+          owner_repo = os.environ["OWNER_REPO"]
+          repo_url = os.environ["REPO_URL"]
+          fingerprint = os.environ["FINGERPRINT"]
+          owner, repo_name = owner_repo.split("/", 1)
+          fdroid_uri = f"fdroidrepos://{owner}.github.io/{repo_name}/repo?fingerprint={fingerprint}"
+
+          # Write F-Droid config.yml with valid zero-indent keys and safe JSON string literals.
+          config_lines = [
+              f"repo_url: {json.dumps(repo_url)}",
+              'repo_name: "WordCraft (Android) F-Droid Repo"',
+              'repo_description: "Unofficial 100% offline Android fork based on WordCraft (lukasz-sklad/word-apk)."',
+              f"keystore: {json.dumps(str(runner_temp / 'fdroid-repo.p12'))}",
+              f"keystorepass: {json.dumps(os.environ['FDROID_REPO_KEYSTORE_PASS'])}",
+              f"keypass: {json.dumps(os.environ['FDROID_REPO_KEY_PASS'])}",
+              f"repo_keyalias: {json.dumps(os.environ['FDROID_REPO_KEY_ALIAS'])}",
+              f"sdk_path: {json.dumps(os.environ['ANDROID_HOME'])}",
+              f"apksigner: {json.dumps(os.environ['APKSIGNER'])}",
+              "archive_older: 0",
+          ]
+          (work / "config.yml").write_text("\n".join(config_lines) + "\n", encoding="utf-8")
+
+          # Populate app-level F-Droid metadata so fdroid update includes Categories, License, and links.
+          app_meta = "\n".join([
+              "Categories:",
+              "  - Writing",
+              "  - Office",
+              "License: MIT OR Apache-2.0",
+              "AuthorName: WordCraft contributors, lukasz-sklad",
+              f"SourceCode: https://github.com/{owner_repo}",
+              f"IssueTracker: https://github.com/{owner_repo}/issues",
+              f"Changelog: https://github.com/{owner_repo}/releases",
+              "AutoName: WordCraft (Android)",
+              "",
+          ])
+          (work / "metadata" / "one.lmk.wordcraft.yml").write_text(app_meta, encoding="utf-8")
+
+          index_html = f"""<!doctype html>
+          <html lang="pl">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>WordCraft (Android) — Repo F-Droid</title>
+            <style>
+              body {{ font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #18181b; background: #f8fafc; }}
+              .card {{ background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.5rem; }}
+              .btn {{ display: inline-block; padding: 0.7rem 1.1rem; background: #2563eb; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; }}
+              code {{ background: #f1f5f9; padding: 0.15rem 0.35rem; border-radius: 4px; word-break: break-all; }}
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h1>WordCraft (Android) — repozytorium F-Droid</h1>
+              <p>Nieoficjalny, w 100% offline fork edytora WordCraft (bez uprawnienia INTERNET, bez Google Play Services).</p>
+              <p><a class="btn" href="{html.escape(fdroid_uri, quote=True)}">Dodaj repozytorium w F-Droid / Droid-ify</a></p>
+              <p><strong>Adres repozytorium:</strong><br><code>{html.escape(repo_url)}</code></p>
+              <p><strong>Odcisk SHA-256:</strong><br><code>{html.escape(fingerprint)}</code></p>
+              <p><strong>Kod źródłowy i wydania:</strong> <a href="https://github.com/{html.escape(owner_repo, quote=True)}">github.com/{html.escape(owner_repo)}</a></p>
+            </div>
+          </body>
+          </html>
+          """
+          (site / "index.html").write_text(index_html, encoding="utf-8")
+          PY
+
+          (
+            cd "$WORK"
+            "$RUNNER_TEMP/fdroid-venv/bin/fdroid" update --create-metadata --use-date-from-apk -v
+          )
+
+          # Copy ONLY public repo artifacts to SITE (never config.yml or keystores).
+          cp -r "$WORK/repo" "$SITE/repo"
+          cp -f fastlane/metadata/android/en-US/images/icon.png "$SITE/icon.png"
+
+      - name: Upload GitHub Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/fdroid-site
+
+      - name: Deploy F-Droid Repo to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
